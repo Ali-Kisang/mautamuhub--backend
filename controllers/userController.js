@@ -1,0 +1,69 @@
+import User from "../models/User.js";
+import Profile from "../models/ProfileSchema.js";
+import mongoose from "mongoose";
+export const updateProfile = async (req, res) => {
+  try {
+    const { location, gender, username } = req.body;
+    const photos = req.files?.map(file => `/uploads/${file.filename}`);
+    const user = await User.findByIdAndUpdate(req.user.id, {
+      location, gender, username,
+      ...(photos && { photos })
+    }, { new: true });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUsers = async (req, res) => {
+  const users = await User.find({ _id: { $ne: req.user.id } });
+  res.json(users);
+};
+
+// Get another user's profile by ID
+
+
+// GET /api/users/profile/:userId
+export const getUserProfile = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+const profile = await Profile.findOne({ user: userId }).populate("user", "-password");
+
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found please update" });
+    }
+
+    res.json(profile);
+  } catch (error) {
+    console.error("Fetch profile error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// GET /api/users/profile-by-id/:id
+export const getProfileById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid profile ID" });
+    }
+
+    const profile = await Profile.findById(id).populate("user", "-password");
+
+    if (!profile) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    res.json(profile);
+  } catch (error) {
+    console.error("Error fetching profile by ID:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
+

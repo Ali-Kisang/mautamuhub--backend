@@ -1,0 +1,12 @@
+import express from "express";
+import { protect } from "../middleware/authMiddleware.js";
+import { sendMessage, editMessage, deleteMessage, getMessages, markDelivered, markSeen } from "../controllers/chatController.js";
+import { upload } from "../utils/uploadMiddleware.js";
+const router = express.Router();
+router.post("/", protect, upload.single("file"),  sendMessage);
+router.put("/edit", protect, editMessage);
+router.delete("/:messageId", protect, deleteMessage);
+router.get("/:receiverId", protect, getMessages);
+router.put("/seen/:messageId", protect, markSeen);
+router.put("/delivered/:messageId", protect, markDelivered);
+export default router;
