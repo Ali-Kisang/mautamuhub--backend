@@ -79,3 +79,18 @@ export const markDelivered = async (req, res) => {
     res.status(500).json({ error: "Error marking delivered" });
   }
 };
+// ✅ Get unread count for logged-in user
+export const getUnreadCount = async (req, res) => {
+  try {
+    const count = await Chat.countDocuments({
+      receiverId: req.user.id,
+      status: { $ne: "seen" }, 
+      deleted: false
+    });
+    res.json({ count });
+  } catch (err) {
+    console.error("❌ Error fetching unread count:", err);
+    res.status(500).json({ error: "Error fetching unread count" });
+  }
+};
+

@@ -23,13 +23,12 @@ export const getUsers = async (req, res) => {
 // Get another user's profile by ID
 
 
-// GET /api/users/profile/:userId
+// userController.js
 export const getUserProfile = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { id } = req.params; 
 
-const profile = await Profile.findOne({ user: userId }).populate("user", "-password");
-
+    const profile = await Profile.findOne({ user: id }).populate("user", "-password");
     if (!profile) {
       return res.status(404).json({ message: "Profile not found please update" });
     }
@@ -40,6 +39,7 @@ const profile = await Profile.findOne({ user: userId }).populate("user", "-passw
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 // GET /api/users/profile-by-id/:id
 export const getProfileById = async (req, res) => {

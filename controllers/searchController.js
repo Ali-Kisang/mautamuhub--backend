@@ -5,8 +5,15 @@ export const searchProfiles = async (req, res) => {
   try {
     const { q, page = 1, limit = 10 } = req.query;
 
+    // Always send a consistent shape, even if no query
     if (!q || q.trim() === "") {
-      return res.status(400).json({ message: "Search query is required" });
+      return res.status(200).json({
+        profiles: [],
+        total: 0,
+        page: Number(page),
+        totalPages: 0,
+        message: "Search query is required"
+      });
     }
 
     const searchRegex = new RegExp(q, "i");
@@ -36,6 +43,13 @@ export const searchProfiles = async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Error in searchProfiles:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({
+      profiles: [],
+      total: 0,
+      page: 1,
+      totalPages: 0,
+      message: "Server error",
+      error: err.message
+    });
   }
 };
