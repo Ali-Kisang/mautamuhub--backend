@@ -64,6 +64,36 @@ export const getProfileById = async (req, res) => {
 };
 
 
+// ✅ Check if user has profile
+export const checkUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id; 
+
+    // 1. Ensure user exists
+    const user = await User.findById(userId).select("-password");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // 2. Check if profile exists for this user
+    const profile = await Profile.findOne({ user: userId }).populate("user", "-password");
+
+    if (!profile) {
+      return res.status(200).json({ 
+        hasProfile: false, 
+        message: "Profile not found. Please create one." 
+      });
+    }
+
+    // 3. Return profile if found
+    res.status(200).json({ hasProfile: true, profile });
+  } catch (error) {
+    console.error("Check profile error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
 
 
 

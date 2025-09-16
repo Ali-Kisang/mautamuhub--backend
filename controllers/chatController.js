@@ -1,7 +1,7 @@
 import Chat from "../models/Chat.js";
 import path from "path";
 import fs from "fs";
-
+import mongoose from "mongoose";
 // Send a new message (with optional attachment)
 export const sendMessage = async (req, res) => {
   try {
@@ -94,3 +94,65 @@ export const getUnreadCount = async (req, res) => {
   }
 };
 
+// ✅ Mark all messages in a conversation as seen
+export const markConversationRead = async (req, res) => {
+  try {
+    const { receiverId } = req.params;
+
+    // Update all messages sent to the logged-in user from this receiver
+    await Chat.updateMany(
+      {
+        senderId: receiverId,
+        receiverId: req.user.id,
+        status: { $ne: "seen" },
+      },
+      { $set: { status: "seen" } }
+    );
+
+    // Get fresh unread count
+    const count = await Chat.countDocuments({
+      receiverId: req.user.id,
+      status: { $ne: "seen" },
+      deleted: false,
+    });
+
+    // 🔥 Notify the sender via socket that their messages were read
+    if (req.io) {
+      req.io.to(receiverId).emit("messageRead", {
+        readerId: req.user.id,
+        conversationWith: receiverId,
+      });
+    }
+
+    res.json({ success: true, unreadCount: count });
+  } catch (err) {
+    console.error("❌ Error marking conversation read:", err);
+    res.status(500).json({ error: "Error marking conversation read" });
+  }
+};
+
+// ✅ In chatController.js
+export const getUnreadByUser = async (req, res) => {
+  try {
+    const unread = await Chat.aggregate([
+      {
+        $match: {
+          receiverId: new mongoose.Types.ObjectId(req.user.id),
+          status: { $ne: "seen" },
+          deleted: false,
+        },
+      },
+      {
+        $group: {
+          _id: "$senderId",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    res.json(unread); 
+  } catch (err) {
+    console.error("❌ Error fetching per-user unread:", err);
+    res.status(500).json({ error: "Error fetching per-user unread" });
+  }
+};
