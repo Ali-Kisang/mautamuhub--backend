@@ -25,11 +25,10 @@ export const register = async (req, res) => {
       username,
       email,
       password: hash,
-      avatar: avatarPublicId, // store Cloudinary public_id
+      avatar: avatarPublicId,
     });
 
     res.json(user);
-    console.log(user);
   } catch (err) {
     console.error("Registration error:", err);
     res.status(500).json({ error: err.message });
