@@ -5,26 +5,32 @@ import mongoose from "mongoose";
 // Send a new message (with optional attachment)
 export const sendMessage = async (req, res) => {
   try {
-    const { receiverId, message } = req.body;
-    const fileUrl = req.file ? `/uploads/${req.file.filename}` : ""; // from Multer
-//delete the file after upload
-   
+    const { receiverId, message } = req.body; 
+    if (!receiverId || !message) { 
+      return res.status(400).json({ error: "Missing receiverId or message" });
+    }
+
+    const fileUrl = req.file ? `/uploads/${req.file.filename}` : "";
+    
     const chat = await Chat.create({
       senderId: req.user.id,
       receiverId,
-      message,
+      message, 
       fileUrl,
       status: "sent",
     });
+    
 
+    // ✅ Emit real-time to receiver
+    const io = req.app.get('io');
+    io.to(receiverId).emit("receiveMessage", chat);
 
     res.json(chat);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Error sending message" });
+    console.error("🚨 SendMessage ERROR:", err);
+    res.status(500).json({ error: "Error sending message: " + err.message });
   }
 };
-
 
 export const editMessage = async (req, res) => {
   const { messageId, newText } = req.body;
@@ -40,13 +46,13 @@ export const deleteMessage = async (req, res) => {
 
 
 export const getMessages = async (req, res) => {
-  const { receiverId } = req.params;
+ const { receiverId } = req.params;
   const chats = await Chat.find({
     $or: [
       { senderId: req.user.id, receiverId },
       { senderId: receiverId, receiverId: req.user.id }
     ]
-  });
+  }).sort({ createdAt: 1 }); 
   res.json(chats);
 };
 
@@ -117,8 +123,9 @@ export const markConversationRead = async (req, res) => {
     });
 
     // 🔥 Notify the sender via socket that their messages were read
-    if (req.io) {
-      req.io.to(receiverId).emit("messageRead", {
+    const io = req.app.get('io'); // ✅ Now available
+    if (io) {
+      io.to(receiverId).emit("messagesRead", { // Renamed for clarity (optional)
         readerId: req.user.id,
         conversationWith: receiverId,
       });
