@@ -100,7 +100,7 @@ io.on("connection", (socket) => {
     io.emit("onlineUsersUpdate", onlineUsers);
   });
 
-  // ✅ Chat features
+  // // ✅ Chat features
   socket.on("sendMessage", (data) => {
     io.to(data.receiverId).emit("receiveMessage", data);
   });

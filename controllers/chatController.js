@@ -2,6 +2,9 @@ import Chat from "../models/Chat.js";
 import path from "path";
 import fs from "fs";
 import mongoose from "mongoose";
+import { sendPushNotification } from "../utils/notifications.js";
+import User from "../models/User.js";
+
 // Send a new message (with optional attachment)
 export const sendMessage = async (req, res) => {
   try {
@@ -24,6 +27,20 @@ export const sendMessage = async (req, res) => {
     // ✅ Emit real-time to receiver
     const io = req.app.get('io');
     io.to(receiverId).emit("receiveMessage", chat);
+
+    // ✅ Send push notification if receiver is subscribed
+    const receiver = await User.findById(receiverId).select('pushSubscription');
+    if (receiver && receiver.pushSubscription) {
+      const senderName = req.user.username || 'Someone';
+      await sendPushNotification(
+  receiver.pushSubscription,
+  'New Message on Mautamu',
+  `${senderName}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`,
+  req.user.avatar ? `https://res.cloudinary.com/dcxggvejn/image/upload/${req.user.avatar}` : '/default-avatar.png',
+  req.user.id  
+);
+      console.log('🔔 Push notification sent!');
+    }
 
     res.json(chat);
   } catch (err) {
@@ -161,5 +178,97 @@ export const getUnreadByUser = async (req, res) => {
   } catch (err) {
     console.error("❌ Error fetching per-user unread:", err);
     res.status(500).json({ error: "Error fetching per-user unread" });
+  }
+};
+
+
+
+export const getRecentConversations = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    // ✅ Aggregate recent convos (with guards for empty DB)
+    const conversations = await Chat.aggregate([
+      // Match messages involving user (sent/received, non-deleted)
+      {
+        $match: {
+          $or: [
+            { senderId: new mongoose.Types.ObjectId(userId), deleted: false },
+            { receiverId: new mongoose.Types.ObjectId(userId), deleted: false }
+          ]
+        }
+      },
+      // Group by other user, get last msg + unread sum
+      {
+        $group: {
+          _id: {
+            otherUser: { 
+              $cond: [ 
+                { $eq: ["$senderId", new mongoose.Types.ObjectId(userId)] }, 
+                "$receiverId", 
+                "$senderId" 
+              ] 
+            }
+          },
+          lastMessage: { $last: "$$ROOT" },
+          unreadCount: {
+            $sum: {
+              $cond: [
+                { 
+                  $and: [ 
+                    { $eq: ["$receiverId", new mongoose.Types.ObjectId(userId)] }, 
+                    { $ne: ["$status", "seen"] } 
+                  ] 
+                },
+                1,
+                0
+              ]
+            }
+          }
+        }
+      },
+      // Sort by last msg desc
+      { $sort: { "lastMessage.createdAt": -1 } },
+      { $limit: 50 },
+      // Lookup other user (with lastSeen)
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id.otherUser",
+          foreignField: "_id",
+          as: "otherUser",
+          pipeline: [
+            { $project: { username: 1, avatar: 1, lastSeen: 1 } }
+          ]
+        }
+      },
+      { $unwind: { path: "$otherUser", preserveNullAndEmptyArrays: true } }, // Handle no user (rare)
+      // Project clean output
+      {
+        $project: {
+          userId: "$_id.otherUser",
+          username: { $ifNull: ["$otherUser.username", "Unknown"] },
+          avatar: { $ifNull: ["$otherUser.avatar", "/default-avatar.png"] },
+          lastSeen: "$otherUser.lastSeen",
+          lastMessage: {
+            _id: "$lastMessage._id",
+            message: "$lastMessage.message",
+            createdAt: "$lastMessage.createdAt",
+            senderId: "$lastMessage.senderId",
+            isMine: { $eq: ["$lastMessage.senderId", new mongoose.Types.ObjectId(userId)] }
+          },
+          unreadCount: { $max: ["$unreadCount", 0] }
+        }
+      }
+    ]);
+
+    console.log(`Recent convos for ${userId}: ${conversations.length}`); // Debug: Check count
+    res.json(conversations);
+  } catch (err) {
+    console.error("❌ Recent convos error:", err); // Log full err
+    res.status(500).json({ error: "Failed to fetch recent conversations" });
   }
 };
