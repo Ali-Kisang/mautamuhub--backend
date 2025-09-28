@@ -28,12 +28,25 @@ export const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params; 
 
-    const profile = await Profile.findOne({ user: id }).populate("user", "-password");
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found please update" });
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
     }
 
-    res.json(profile);
+    const profile = await Profile.findOne({ user: id }).populate("user", "-password -pushSubscription");
+
+    let userData;
+
+    if (!profile) {
+      const user = await User.findById(id).select("-password -pushSubscription");
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      userData = user;
+    } else {
+      userData = profile.user;
+    }
+
+    res.json({ user: userData });
   } catch (error) {
     console.error("Fetch profile error:", error);
     res.status(500).json({ message: "Server error" });
