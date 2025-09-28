@@ -23,30 +23,22 @@ export const getUsers = async (req, res) => {
 // Get another user's profile by ID
 
 
+// userController.js
 export const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params; 
 
     const profile = await Profile.findOne({ user: id }).populate("user", "-password");
     if (!profile) {
-      // Even if profile not found, return avatar from User
-      const user = await User.findById(id).select("avatar username email");
-      return res.status(404).json({ 
-        message: "Profile not found. Please update", 
-        avatar: user?.avatar || null 
-      });
+      return res.status(404).json({ message: "Profile not found please update" });
     }
 
-    res.json({
-      ...profile.toObject(),
-      avatar: profile.user?.avatar || null  
-    });
+    res.json(profile);
   } catch (error) {
     console.error("Fetch profile error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 
 // GET /api/users/profile-by-id/:id

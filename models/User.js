@@ -9,7 +9,14 @@ const userSchema = new mongoose.Schema(
     pushSubscription: { type: Object }, 
     lastSeen: { type: Date, default: Date.now }, 
   },
-  { timestamps: true }
+  { 
+    timestamps: true,
+    indexes: [
+      { lastSeen: -1 }, 
+      { email: 1 }, 
+      { username: 1 } 
+    ]
+  }
 );
 
 const User = mongoose.model("User", userSchema);

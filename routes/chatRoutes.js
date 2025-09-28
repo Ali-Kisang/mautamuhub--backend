@@ -1,6 +1,6 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
-import { sendMessage, editMessage, deleteMessage, markConversationRead, getMessages, markDelivered, markSeen, getUnreadCount, getUnreadByUser, getRecentConversations } from "../controllers/chatController.js";
+import { sendMessage, editMessage, deleteMessage, markConversationRead, getMessages, markDelivered, markSeen, getUnreadCount, getUnreadByUser, getRecentConversations, removeReaction, addReaction } from "../controllers/chatController.js";
 import { upload } from "../utils/uploadMiddleware.js";
 
 const router = express.Router();
@@ -18,5 +18,7 @@ router.get("/:receiverId", protect, getMessages);
 router.put("/seen/:messageId", protect, markSeen);
 router.put("/delivered/:messageId", protect, markDelivered);
 router.put("/mark-read/:receiverId", protect, markConversationRead);
+router.post("/react", protect, addReaction);
+router.delete("/react", protect, removeReaction);
 
 export default router;

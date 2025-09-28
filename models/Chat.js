@@ -13,6 +13,11 @@ const chatSchema = new mongoose.Schema(
     },
     deleted: { type: Boolean, default: false },
     edited: { type: Boolean, default: false },
+    reactions: [{
+      emoji: { type: String, required: true },
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+      timestamp: { type: Date, default: Date.now }
+    }], 
   },
   { timestamps: true }
 );

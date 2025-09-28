@@ -63,14 +63,30 @@ export const deleteMessage = async (req, res) => {
 
 
 export const getMessages = async (req, res) => {
- const { receiverId } = req.params;
-  const chats = await Chat.find({
-    $or: [
-      { senderId: req.user.id, receiverId },
-      { senderId: receiverId, receiverId: req.user.id }
-    ]
-  }).sort({ createdAt: 1 }); 
-  res.json(chats);
+  try {
+    const { receiverId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(receiverId)) {
+      return res.status(400).json({ error: "Invalid receiver ID" });
+    }
+
+    const chats = await Chat.find({
+      $or: [
+        { senderId: req.user.id, receiverId: new mongoose.Types.ObjectId(receiverId), deleted: false },
+        { senderId: new mongoose.Types.ObjectId(receiverId), receiverId: req.user.id, deleted: false }
+      ]
+    })
+    .sort({ createdAt: 1 })
+    .populate([
+      { path: 'senderId', select: 'username avatar' },
+      { path: 'receiverId', select: 'username avatar' },
+      { path: 'reactions.userId', select: 'username' } 
+    ]);
+
+    res.json(chats);
+  } catch (err) {
+    console.error("🚨 GetMessages ERROR:", err);
+    res.status(500).json({ error: "Error fetching messages" });
+  }
 };
 
 export const markSeen = async (req, res) => {
@@ -270,5 +286,49 @@ export const getRecentConversations = async (req, res) => {
   } catch (err) {
     console.error("❌ Recent convos error:", err); // Log full err
     res.status(500).json({ error: "Failed to fetch recent conversations" });
+  }
+};
+
+export const addReaction = async (req, res) => {
+  try {
+    const { messageId, emoji } = req.body;
+    const userId = req.user.id;
+
+    const chat = await Chat.findByIdAndUpdate(
+      messageId,
+      { $push: { reactions: { emoji, userId } } },
+      { new: true }
+    ).populate("reactions.userId", "username"); // For display
+
+    // Emit to room
+    const io = req.app.get('io');
+    io.to(chat.senderId.toString()).emit("reactionAdded", { messageId, emoji, userId });
+    io.to(chat.receiverId.toString()).emit("reactionAdded", { messageId, emoji, userId });
+
+    res.json(chat.reactions);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to add reaction" });
+  }
+};
+
+export const removeReaction = async (req, res) => {
+  try {
+    const { messageId, emoji } = req.body;
+    const userId = req.user.id;
+
+    const chat = await Chat.findByIdAndUpdate(
+      messageId,
+      { $pull: { reactions: { emoji, userId } } },
+      { new: true }
+    );
+
+    // Emit
+    const io = req.app.get('io');
+    io.to(chat.senderId.toString()).emit("reactionRemoved", { messageId, emoji, userId });
+    io.to(chat.receiverId.toString()).emit("reactionRemoved", { messageId, emoji, userId });
+
+    res.json(chat.reactions);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to remove reaction" });
   }
 };

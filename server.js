@@ -61,6 +61,7 @@ io.on("connection", (socket) => {
 
   // ✅ Handle user going online
   socket.on("userOnline", async (userData) => {
+    console.log(`📡 Received userOnline emit for user: ${userData.userId}, username: ${userData.username}`); // ✅ Debug: Confirm emit received
     try {
       // Fetch the user details from DB
       const dbUser = await User.findById(userData.userId).lean();
@@ -69,9 +70,17 @@ io.on("connection", (socket) => {
         return;
       }
 
+      // ✅ Update lastSeen in DB on online event
+      const updateResult = await User.findByIdAndUpdate(userData.userId, { lastSeen: new Date() });
+      if (updateResult) {
+        console.log(`🔄 Updated lastSeen for user ${userData.userId} to ${new Date().toISOString()}`); // ✅ Confirm update
+      } else {
+        console.warn(`⚠️ Failed to update lastSeen for user ${userData.userId}`); // ✅ Catch update failure
+      }
+
       const newUser = {
         userId: dbUser._id.toString(),
-        username: dbUser.personal?.username || dbUser.username || "Unnamed",
+        username: dbUser.personal?.username || dbUser.username || "Unnamed", // Note: personal not in User schema, falls back to username
         avatar: dbUser.avatar || "/default-avatar.png",
         socketId: socket.id,
       };
@@ -80,15 +89,18 @@ io.on("connection", (socket) => {
       const exists = onlineUsers.find((u) => u.userId === newUser.userId);
       if (!exists) {
         onlineUsers.push(newUser);
+        console.log(`➕ Added new online user: ${newUser.username} (${newUser.userId})`); // ✅ Debug add
       } else {
         // Update socketId if user reconnects
         onlineUsers = onlineUsers.map((u) =>
           u.userId === newUser.userId ? newUser : u
         );
+        console.log(`🔄 Updated existing online user: ${newUser.username} (${newUser.userId})`); // ✅ Debug update
       }
 
       // Broadcast updated list
       io.emit("onlineUsersUpdate", onlineUsers);
+      console.log(`📢 Broadcasted onlineUsersUpdate to ${onlineUsers.length} users`); // ✅ Debug broadcast
     } catch (err) {
       console.error("❌ Error in userOnline handler:", err);
     }
@@ -96,11 +108,15 @@ io.on("connection", (socket) => {
 
   // ✅ Handle disconnect
   socket.on("disconnect", () => {
+    const removedUser = onlineUsers.find((u) => u.socketId === socket.id);
     onlineUsers = onlineUsers.filter((u) => u.socketId !== socket.id);
+    if (removedUser) {
+      console.log(`👋 Removed disconnected user: ${removedUser.username} (${removedUser.userId})`); // ✅ Debug remove
+    }
     io.emit("onlineUsersUpdate", onlineUsers);
   });
 
-  // // ✅ Chat features
+  // ✅ Chat features
   socket.on("sendMessage", (data) => {
     io.to(data.receiverId).emit("receiveMessage", data);
   });
