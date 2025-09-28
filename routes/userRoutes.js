@@ -1,17 +1,33 @@
 import express from "express";
-import { updateProfile, getUsers, getUserProfile, checkUserProfile,  getProfileById } from "../controllers/userController.js";
+import { updateProfile, getUsers, getUserProfile, checkUserProfile, getProfileById } from "../controllers/userController.js";
 import { protect } from "../middleware/authMiddleware.js";
-import {upload} from "../utils/upload.js";
-import { createOrUpdateProfile, getMyProfile } from "../controllers/userProfileDataController.js";
+import { upload } from "../utils/upload.js";
+import { createOrUpdateProfile, getMyProfile, deleteProfilePhoto } from "../controllers/userProfileDataController.js";
 import User from "../models/User.js";
 
 const router = express.Router();
+
+// 👉 Move DELETE to TOP for priority matching (before any other routes)
+router.delete("/profile/photos/:publicId", protect, (req, res, next) => {
+  console.log('🛡️ DELETE handler reached after auth, publicId:', req.params.publicId);
+  next();
+}, deleteProfilePhoto);
+
+// ✅ Remove the global use log now that we know matching works; add specific log instead
+// (Comment out or remove the router.use for clean logs)
+
+// ✅ PUT /api/users/profile - Create/Update profile with photos
 router.put("/profile", protect, upload.array("photos", 10), createOrUpdateProfile);
-router.get("/get-profile", protect, getMyProfile);
+
+// ✅ GET /api/users/profile - Get current user's profile
+router.get("/profile", protect, getMyProfile);
+
+// Other routes (after specific ones)
 router.get("/all", protect, getUsers);
-router.get("/profile/:id",  getUserProfile);
+router.get("/profile/:id", getUserProfile);
 router.get("/check-profile", protect, checkUserProfile);
 router.get("/profile-by-id/:id", getProfileById);
+
 router.post("/update-push-sub", protect, async (req, res) => {
   try {
     const { subscription } = req.body;
@@ -27,7 +43,7 @@ router.post("/update-push-sub", protect, async (req, res) => {
     }
 
     const updatedUser = await User.findByIdAndUpdate(
-      req.user.id,
+      req.user._id,
       { pushSubscription: parsedSub },
       { new: true, runValidators: true }
     );

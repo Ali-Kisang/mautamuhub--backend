@@ -1,16 +1,83 @@
 import User from "../models/User.js";
 import Profile from "../models/ProfileSchema.js";
 import mongoose from "mongoose";
+
 export const updateProfile = async (req, res) => {
   try {
-    const { location, gender, username } = req.body;
-    const photos = req.files?.map(file => `/uploads/${file.filename}`);
-    const user = await User.findByIdAndUpdate(req.user.id, {
-      location, gender, username,
-      ...(photos && { photos })
-    }, { new: true });
-    res.json(user);
+    const userId = req.user.id;
+
+    // Ensure user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Parse nested FormData fields (e.g., personal[phone])
+    const personal = {};
+    const location = {};
+    const additional = {};
+    const services = { selected: [], custom: "" };
+    const accountType = {};
+
+    // Helper to parse nested fields
+    const parseNested = (prefix, target) => {
+      Object.keys(req.body).forEach((key) => {
+        if (key.startsWith(`${prefix}[`)) {
+          const subKey = key.slice(prefix.length + 1, -1); // Extract inner key
+          if (prefix === "services" && key.startsWith(`${prefix}[selected][`)) {
+            const index = key.match(/\[(\d+)\]/)?.[1];
+            if (index !== undefined) {
+              services.selected[parseInt(index)] = req.body[key];
+            }
+          } else {
+            target[subKey] = req.body[key];
+          }
+        }
+      });
+    };
+
+    parseNested("personal", personal);
+    parseNested("location", location);
+    parseNested("additional", additional);
+    parseNested("accountType", accountType);
+
+    // Handle services custom
+    if (req.body["services[custom]"]) {
+      services.custom = req.body["services[custom]"];
+    }
+
+    // Validate accountType type enum
+    if (accountType.type && !["Regular", "VIP", "VVIP", "Spa"].includes(accountType.type)) {
+      return res.status(400).json({ error: "Invalid account type" });
+    }
+
+    // Handle photos: Merge new uploads with existing
+    let photos = [];
+    if (req.files && req.files.length > 0) {
+      const newPhotos = req.files.map((file) => `/uploads/${file.filename}`);
+      // Fetch existing profile to merge photos
+      const existingProfile = await Profile.findOne({ user: userId });
+      photos = existingProfile ? [...(existingProfile.photos || []), ...newPhotos] : newPhotos;
+    }
+
+    // Upsert profile (create if none, update if exists)
+    const profile = await Profile.findOneAndUpdate(
+      { user: userId },
+      {
+        user: userId,
+        personal,
+        location,
+        additional,
+        services,
+        accountType,
+        photos: photos || undefined, // Only set if new photos provided
+      },
+      { upsert: true, new: true, runValidators: true }
+    ).populate("user", "-password");
+
+    res.json(profile);
   } catch (err) {
+    console.error("Update profile error:", err);
     res.status(500).json({ error: err.message });
   }
 };
