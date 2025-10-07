@@ -2,17 +2,10 @@ import Profile from "../models/ProfileSchema.js";
 import User from "../models/User.js"; // Import User model if needed for validation
 import Transaction from "../models/Transaction.js"; // Add import for Transaction model
 import fs from "fs";
-import path from "path";  // Add for path handling
 import { uploadEscortPhotos, deleteEscortPhoto } from "../utils/cloudinary.js";
 import mongoose from "mongoose";
 import qs from "qs";
-import { initiateSTKPush } from "../utils/safaricom.js"; 
-
-// Temp directory for holding files until payment success (create if not exists)
-const TEMP_UPLOAD_DIR = path.join(process.cwd(), 'temp-uploads');
-if (!fs.existsSync(TEMP_UPLOAD_DIR)) {
-  fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
-}
+import { initiateSTKPush } from "../utils/safaricom.js"; // Add import for STK Push helper
 
 /**
  * Create or Update Profile (PUT /api/users/profile)
@@ -58,7 +51,10 @@ export const createOrUpdateProfile = async (req, res) => {
 
     const accountType = parsed.accountType || {};
 
-    
+    // ✅ Validate required fields (add more if needed for create)
+    if (!personalFlat.username) {
+      return res.status(400).json({ message: "Username is required" });
+    }
     if (!personalFlat.phone) {
       return res.status(400).json({ message: "Phone is required" });
     }
@@ -79,30 +75,24 @@ export const createOrUpdateProfile = async (req, res) => {
       photos = [...new Set([...photos, ...existing])];  // Merge and dedupe
     }
 
-    // ✅ For payment-required: Queue new photo file paths (don't upload yet; move to callback)
-    let tempPhotoPaths = [];
+    // Handle new photo uploads (multer attaches them; only Files from frontend)
     if (req.files && req.files.length > 0) {
+      const newPublicIds = [];
       for (const file of req.files) {
-        // Move to temp dir instead of immediate upload/unlink
-        const tempPath = path.join(TEMP_UPLOAD_DIR, `${userId}-${Date.now()}-${file.originalname}`);
-        fs.renameSync(file.path, tempPath);  // Move from multer temp to persistent temp
-        tempPhotoPaths.push(tempPath);
-        console.log('📁 Photo queued in temp:', tempPath);
+        try {
+          const publicId = await uploadEscortPhotos(file.path); // Upload to Cloudinary
+          newPublicIds.push(publicId);
+          fs.unlinkSync(file.path); // Remove temp file
+          console.log('📤 New publicId uploaded:', publicId);  // 👉 Log new uploads
+        } catch (uploadErr) {
+          console.error("Upload failed for", file.originalname, ":", uploadErr);
+          // Continue with other files; or return error if strict
+        }
       }
+      photos = [...photos, ...newPublicIds];
     }
-    console.log('🔍 Parsed Data Debug:', {
-  username: personalFlat.username,
-  phone: personalFlat.phone,
-  accountType, 
-  servicesCount: services.selected.length,
-  customService: parsed.services?.custom,
-  existingPhotos: photos.length,
-  newFiles: req.files?.length || 0,
-  totalPhotos: photos.length + (req.files?.length || 0),
-});
 
-    // ✅ Photo limit validation (based on accountType) - check queued + existing
-    const totalPhotos = photos.length + tempPhotoPaths.length;
+    // ✅ Photo limit validation (based on accountType)
     const photoLimit = (() => {
       switch (accountType.type) {
         case "Spa": return 10;
@@ -112,12 +102,10 @@ export const createOrUpdateProfile = async (req, res) => {
         default: return 0;
       }
     })();
-    if (totalPhotos > photoLimit) {
-      // Clean up temp files if validation fails
-      tempPhotoPaths.forEach(p => fs.unlinkSync(p));
+    if (photos.length > photoLimit) {
       return res.status(400).json({ message: `Too many photos. Limit for ${accountType.type}: ${photoLimit}` });
     }
-    if (totalPhotos === 0) {
+    if (photos.length === 0) {
       return res.status(400).json({ message: "At least one photo is required" });
     }
 
@@ -129,22 +117,10 @@ export const createOrUpdateProfile = async (req, res) => {
       const accountRef = `Account-${accountType.type}-${String(userId).slice(-6)}`;
       const transactionDesc = `Payment for ${accountType.type} (${accountType.duration} days)`;
 
-      // Queue full profile data (excluding user; photos as paths for later upload)
-      const queuedProfileData = {
-        personal: personalFlat,
-        location: locationFlat,
-        additional: additionalFlat,
-        services,
-        accountType,
-        existingPhotos: photos,  // Existing publicIds
-        tempPhotoPaths,  // New files to upload on success
-        paymentPending: true,  // Flag for incomplete state
-      };
-
       // Initiate STK Push first
       const stkResponse = await initiateSTKPush(phone, amount, accountRef, transactionDesc);
 
-      // Now create transaction with checkoutRequestID set
+      // Now create transaction with checkoutRequestID set (avoids null dup key)
       const transaction = await Transaction.create({
         user: userId,
         checkoutRequestID: stkResponse.CheckoutRequestID,
@@ -154,10 +130,18 @@ export const createOrUpdateProfile = async (req, res) => {
         transactionDesc,
         accountType: accountType.type,
         duration: accountType.duration,
-        queuedProfileData,
+        // Queue full profile data (excluding user, as it's set on finalize)
+        queuedProfileData: {
+          personal: personalFlat,
+          location: locationFlat,
+          additional: additionalFlat,
+          services,
+          accountType,
+          photos,
+        },
       });
 
-      console.log(`💳 Payment initiated for user ${userId}: CheckoutRequestID ${stkResponse.CheckoutRequestID} (profile queued, photos pending upload)`);
+      console.log(`💳 Payment initiated for user ${userId}: CheckoutRequestID ${stkResponse.CheckoutRequestID}`);
       return res.json({
         requiresPayment: true,
         message: 'Payment initiated. Check your phone for M-Pesa PIN prompt.',
@@ -167,24 +151,7 @@ export const createOrUpdateProfile = async (req, res) => {
       });
     }
 
-    // If no payment needed (e.g., amount=0 or free tier), upload photos now and proceed with upsert
-    let finalPhotos = [...photos];
-    if (tempPhotoPaths.length > 0) {
-      const newPublicIds = [];
-      for (const tempPath of tempPhotoPaths) {
-        try {
-          const publicId = await uploadEscortPhotos(tempPath); // Upload to Cloudinary
-          newPublicIds.push(publicId);
-          fs.unlinkSync(tempPath); // Remove temp file
-          console.log('📤 New publicId uploaded:', publicId);
-        } catch (uploadErr) {
-          console.error("Upload failed for temp file:", tempPath, ":", uploadErr);
-          // Continue or error as needed
-        }
-      }
-      finalPhotos = [...finalPhotos, ...newPublicIds];
-    }
-
+    // If no payment needed (e.g., amount=0 or free tier), proceed with upsert
     const profileData = {
       user: userId,
       personal: personalFlat,
@@ -192,7 +159,7 @@ export const createOrUpdateProfile = async (req, res) => {
       additional: additionalFlat,
       services,
       accountType,
-      photos: finalPhotos,
+      photos,
     };
 
     const profile = await Profile.findOneAndUpdate(
@@ -201,13 +168,9 @@ export const createOrUpdateProfile = async (req, res) => {
       { new: true, upsert: true, runValidators: true }
     ).populate("user", "email username avatar");
 
-    console.log('💾 Profile saved with photos:', finalPhotos.length, 'for user:', userId);
+    console.log('💾 Profile saved with photos:', photos.length, 'for user:', userId);  // 👉 Log saved photos
     res.json({ message: "Profile saved successfully", profile });
   } catch (err) {
-    // Clean up temp files on error
-    if (req.files) {
-      req.files.forEach(file => fs.unlinkSync(file.path));
-    }
     console.error("❌ Profile update error:", err);
     res.status(500).json({ message: err.message || "Failed to save profile" });
   }
