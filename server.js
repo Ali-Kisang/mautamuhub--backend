@@ -14,6 +14,7 @@ import sortAccountTypeRoutes from "./routes/sortAccountTypeRoutes.js";
 import countiesRoutes from "./routes/countiesRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 
+
 dotenv.config();
 const app = express();
 
@@ -28,7 +29,7 @@ app.use(express.json());
 app.use("/uploads", express.static("uploads"));
 
 // ✅ API Routes
-app.use("/api/auth", authRoutes);
+app.use("/api/auth", authRoutes); //mautamuhub.com/
 app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/accounts", sortAccountTypeRoutes);
@@ -120,7 +121,7 @@ io.on("connection", (socket) => {
   socket.on("sendMessage", (data) => {
     io.to(data.receiverId).emit("receiveMessage", data);
   });
-
+ 
   socket.on("editMessage", (data) => {
     io.to(data.receiverId).emit("messageEdited", data);
   });
@@ -147,4 +148,4 @@ io.on("connection", (socket) => {
 });
 
 // ✅ Start server
-server.listen(5000, () => console.log("🚀 Backend running on port 5000"));
+server.listen(5000, () => console.log(" Backend running on port 5000"));

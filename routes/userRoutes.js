@@ -4,29 +4,39 @@ import { protect } from "../middleware/authMiddleware.js";
 import { upload } from "../utils/upload.js";
 import { createOrUpdateProfile, getMyProfile, deleteProfilePhoto } from "../controllers/userProfileDataController.js";
 import User from "../models/User.js";
+import { getMyTransactions, handleCallback, handleValidation, initiatePayment } from "../controllers/transactionController.js";
 
 const router = express.Router();
 
 // 👉 Move DELETE to TOP for priority matching (before any other routes)
 router.delete("/profile/photos/:publicId", protect, (req, res, next) => {
-  console.log('🛡️ DELETE handler reached after auth, publicId:', req.params.publicId);
+ 
   next();
 }, deleteProfilePhoto);
 
-// ✅ Remove the global use log now that we know matching works; add specific log instead
-// (Comment out or remove the router.use for clean logs)
-
-// ✅ PUT /api/users/profile - Create/Update profile with photos
 router.put("/profile", protect, upload.array("photos", 10), createOrUpdateProfile);
 
-// ✅ GET /api/users/profile - Get current user's profile
 router.get("/profile", protect, getMyProfile);
-
+router.post('/payments/initiate', protect, initiatePayment);
+router.post('/payments/callback', handleCallback);  
+router.post('/payments/validation', handleValidation);  
+router.get('/payments/my-transactions', protect, getMyTransactions);
 // Other routes (after specific ones)
 router.get("/all", protect, getUsers);
 router.get("/profile/:id", getUserProfile);
 router.get("/check-profile", protect, checkUserProfile);
 router.get("/profile-by-id/:id", getProfileById);
+
+// router.get('/test-mpesa-token', async (req, res) => {
+//   try {
+//     const { getAccessToken } = await import('../utils/safaricom.js');
+//     const token = await getAccessToken();
+//     res.json({ success: true, message: 'Token good!', tokenPreview: token.substring(0, 20) + '...' });
+//   } catch (err) {
+//     console.error('Token test error:', err.response?.data || err.message);
+//     res.status(500).json({ error: err.message, details: err.response?.data });
+//   }
+// });
 
 router.post("/update-push-sub", protect, async (req, res) => {
   try {
