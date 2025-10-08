@@ -13,6 +13,7 @@ import chatRoutes from "./routes/chatRoutes.js";
 import sortAccountTypeRoutes from "./routes/sortAccountTypeRoutes.js";
 import countiesRoutes from "./routes/countiesRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
+import { scheduleTrialExpiry } from "./crons/jobs/trialExpiry.js";
 
 
 dotenv.config();
@@ -36,12 +37,13 @@ app.use("/api/accounts", sortAccountTypeRoutes);
 app.use("/api/counties", countiesRoutes);
 app.use("/api/search", searchRoutes);
 
-// ✅ MongoDB
 mongoose
   .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
+  .then(() => {
+    console.log("✅ MongoDB Connected");
+    scheduleTrialExpiry();
+  })
   .catch((err) => console.error("❌ Mongo Error:", err));
-
 // ✅ Server & Socket.io
 const server = http.createServer(app);
 const io = new Server(server, {

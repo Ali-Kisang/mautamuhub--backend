@@ -17,7 +17,11 @@ export const searchProfiles = async (req, res) => {
     }
 
     const searchRegex = new RegExp(q, "i");
+    const now = new Date();  // ✅ Current time for expiry check
+
     const query = {
+      active: true,  // ✅ Only active profiles
+      expiryDate: { $gt: now },  // ✅ Not expired
       $or: [
         { "location.county": searchRegex },
         { "location.constituency": searchRegex },

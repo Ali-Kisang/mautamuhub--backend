@@ -1,23 +1,39 @@
 import Profile from "../models/ProfileSchema.js";
 
-
-
-
 export const getUsersByCounties = async (req, res) => {
   try {
+    const now = new Date();  // ✅ Current time for expiry check
+
+    // ✅ Common filter for active & non-expired
+    const activeFilter = {
+      active: true,
+      expiryDate: { $gt: now },  // Not expired
+    };
+
     // ✅ Fetch Spa accounts, sorted by county
-    const spas = await Profile.find({ "accountType.type": "Spa" })
+    const spas = await Profile.find({ 
+      ...activeFilter,
+      "accountType.type": "Spa" 
+    })
       .sort({ "location.county": 1 })
       .exec();
 
     // ✅ Fetch VVIP accounts, sorted by county
-    const vvipAccounts = await Profile.find({ "accountType.type": "VVIP" })
+    const vvipAccounts = await Profile.find({ 
+      ...activeFilter,
+      "accountType.type": "VVIP" 
+    })
       .sort({ "location.county": 1 })
       .exec();
 
     // ✅ Fetch VIP accounts grouped by county
     const vipAccountsByCounty = await Profile.aggregate([
-      { $match: { "accountType.type": "VIP" } },
+      { 
+        $match: { 
+          ...activeFilter,
+          "accountType.type": "VIP" 
+        } 
+      },
       {
         $group: {
           _id: "$location.county",
@@ -29,7 +45,12 @@ export const getUsersByCounties = async (req, res) => {
 
     // ✅ Fetch Regular accounts grouped by county
     const regularAccountsByCounty = await Profile.aggregate([
-      { $match: { "accountType.type": "Regular" } },
+      { 
+        $match: { 
+          ...activeFilter,
+          "accountType.type": "Regular" 
+        } 
+      },
       {
         $group: {
           _id: "$location.county",

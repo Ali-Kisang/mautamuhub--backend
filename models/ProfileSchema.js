@@ -7,7 +7,7 @@ const profileSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      unique: true, // each user has one profile
+      unique: true, 
     },
 
     // Personal Info
@@ -60,11 +60,28 @@ const profileSchema = new mongoose.Schema(
     },
 
     // Photos
-    photos: 
-      {
-        type: [String], required: true,  
-      },
-    
+    photos: {
+      type: [String], 
+      required: true,  
+    },
+
+    // ✅ Active status for expiry (default true)
+    active: {
+      type: Boolean,
+      default: true,
+    },
+
+    // ✅ New: Trial flag (true if in 7-day free trial for this account type)
+    isTrial: {
+      type: Boolean,
+      default: false,
+    },
+
+    // ✅ New: Expiry date for trial or paid period
+    expiryDate: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

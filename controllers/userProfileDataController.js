@@ -7,9 +7,6 @@ import mongoose from "mongoose";
 import qs from "qs";
 import { initiateSTKPush } from "../utils/safaricom.js"; // Add import for STK Push helper
 
-/**
- * Create or Update Profile (PUT /api/users/profile)
- */
 export const createOrUpdateProfile = async (req, res) => {
   try {
     // ✅ Convert user ID to ObjectId (fixes create if schema expects ObjectId)
@@ -49,7 +46,7 @@ export const createOrUpdateProfile = async (req, res) => {
       custom: parsed.services?.custom || "",
     };
 
-    const accountType = parsed.accountType || {};
+    let accountType = parsed.accountType || {};  // Note: let, as we'll modify it for trial
 
     // ✅ Validate required fields (add more if needed for create)
     if (!personalFlat.username) {
@@ -80,10 +77,10 @@ export const createOrUpdateProfile = async (req, res) => {
       const newPublicIds = [];
       for (const file of req.files) {
         try {
-          const publicId = await uploadEscortPhotos(file.path); // Upload to Cloudinary
+          const publicId = await uploadEscortPhotos(file.path);
           newPublicIds.push(publicId);
           fs.unlinkSync(file.path); // Remove temp file
-          console.log('📤 New publicId uploaded:', publicId);  // 👉 Log new uploads
+          console.log('📤 New publicId uploaded:', publicId);  
         } catch (uploadErr) {
           console.error("Upload failed for", file.originalname, ":", uploadErr);
           // Continue with other files; or return error if strict
@@ -109,13 +106,56 @@ export const createOrUpdateProfile = async (req, res) => {
       return res.status(400).json({ message: "At least one photo is required" });
     }
 
-    // ✅ Check if payment is required (all account types have amount > 0)
-    if (accountType.amount && accountType.amount > 0) {
+    // ✅ NEW: Check if this is first-time (give trial) or upgrade (payment)
+    const hasSuccessfulPayment = await Transaction.exists({
+      user: userId,
+      status: 'SUCCESS',
+      accountType: { $ne: undefined },  // Any prior paid upgrade
+    });
+    const isFirstTime = !existingProfile || !hasSuccessfulPayment;
+
+    // ✅ If first-time, auto-give 7-day trial for chosen type (no payment needed)
+    if (isFirstTime) {
+      // Override for trial: amount=0, duration=7, isTrial=true
+      accountType.amount = 0;
+      accountType.duration = 7;
+      const trialExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);  // 7 days
+
+      const profileData = {
+        user: userId,
+        personal: personalFlat,
+        location: locationFlat,
+        additional: additionalFlat,
+        services,
+        accountType,  // Keeps chosen type (e.g., VIP trial)
+        photos,
+        active: true,
+        isTrial: true,
+        expiryDate: trialExpiry,
+      };
+
+      const profile = await Profile.findOneAndUpdate(
+        { user: userId },
+        { $set: profileData },
+        { new: true, upsert: true, runValidators: true }
+      ).populate("user", "email username avatar");
+
+      console.log(`✅ 7-day ${accountType.type} trial assigned & profile saved for user: ${userId}, expires: ${trialExpiry}`);
+      return res.json({ 
+        message: `Free 7-day ${accountType.type} trial activated! Profile saved.`, 
+        profile,
+        trialActive: true,
+        daysLeft: 7 
+      });
+    }
+
+    // ✅ If not first-time (upgrade), check if payment is required
+    if (accountType.amount && parseInt(accountType.amount) > 0) {
       // Normalize phone for M-Pesa
       const phone = personalFlat.phone.startsWith('254') ? personalFlat.phone : `254${personalFlat.phone.slice(1)}`;
       const amount = parseInt(accountType.amount);
       const accountRef = `Account-${accountType.type}-${String(userId).slice(-6)}`;
-      const transactionDesc = `Payment for ${accountType.type} (${accountType.duration} days)`;
+      const transactionDesc = `Upgrade to ${accountType.type} (${accountType.duration} days)`;
 
       // Initiate STK Push first
       const stkResponse = await initiateSTKPush(phone, amount, accountRef, transactionDesc);
@@ -138,20 +178,23 @@ export const createOrUpdateProfile = async (req, res) => {
           services,
           accountType,
           photos,
+          // Add trial flip & expiry for queued data
+          isTrial: false,
+          expiryDate: new Date(Date.now() + accountType.duration * 24 * 60 * 60 * 1000),
         },
       });
 
-      console.log(`💳 Payment initiated for user ${userId}: CheckoutRequestID ${stkResponse.CheckoutRequestID}`);
+      console.log(`💳 Payment initiated for upgrade (user ${userId}): CheckoutRequestID ${stkResponse.CheckoutRequestID}`);
       return res.json({
         requiresPayment: true,
-        message: 'Payment initiated. Check your phone for M-Pesa PIN prompt.',
+        message: 'Payment initiated for upgrade. Check your phone for M-Pesa PIN prompt.',
         checkoutRequestID: stkResponse.CheckoutRequestID,
         transactionId: transaction._id,
         amount: transaction.amount,
       });
     }
 
-    // If no payment needed (e.g., amount=0 or free tier), proceed with upsert
+    // If no payment needed (e.g., extending free or amount=0), proceed with upsert (but flip trial if upgrading)
     const profileData = {
       user: userId,
       personal: personalFlat,
@@ -160,6 +203,9 @@ export const createOrUpdateProfile = async (req, res) => {
       services,
       accountType,
       photos,
+      active: true,
+      isTrial: false,  // Assume paid/renewal
+      expiryDate: new Date(Date.now() + accountType.duration * 24 * 60 * 60 * 1000),
     };
 
     const profile = await Profile.findOneAndUpdate(
@@ -168,13 +214,14 @@ export const createOrUpdateProfile = async (req, res) => {
       { new: true, upsert: true, runValidators: true }
     ).populate("user", "email username avatar");
 
-    console.log('💾 Profile saved with photos:', photos.length, 'for user:', userId);  // 👉 Log saved photos
-    res.json({ message: "Profile saved successfully", profile });
+    console.log('💾 Profile updated (no payment) with photos:', photos.length, 'for user:', userId);
+    res.json({ message: "Profile updated successfully", profile });
   } catch (err) {
     console.error("❌ Profile update error:", err);
     res.status(500).json({ message: err.message || "Failed to save profile" });
   }
 };
+
 
 /**
  * Delete a specific photo from profile (DELETE /api/users/profile/photos/:publicId)

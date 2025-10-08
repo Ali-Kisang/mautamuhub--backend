@@ -55,6 +55,7 @@ export const initiatePayment = async (req, res) => {
   }
 };
 
+
 // Handle M-Pesa Callback (POST /api/payments/callback)
 export const handleCallback = async (req, res) => {
   try {
@@ -94,6 +95,10 @@ export const handleCallback = async (req, res) => {
         const profileData = {
           ...queuedProfile,
           user: userId,  // Add user back for upsert
+          active: true,  // ✅ Ensure active on upgrade (reactivates expired profiles)
+          // ✅ Trial flip & expiry already queued; ensure set (for paid upgrade)
+          isTrial: false,
+          expiryDate: new Date(Date.now() + transaction.duration * 24 * 60 * 60 * 1000),
         };
 
         const profile = await Profile.findOneAndUpdate(
@@ -102,7 +107,12 @@ export const handleCallback = async (req, res) => {
           { new: true, upsert: true, runValidators: true }
         ).populate('user', 'email username avatar');
 
-        console.log('✅ Profile finalized after payment:', profile._id, 'with photos:', profile.photos?.length || 0);
+        console.log('✅ Profile finalized after payment:', profile._id, 
+          'active:', profile.active, 
+          'isTrial:', profile.isTrial, 
+          'expires:', profile.expiryDate,
+          'with photos:', profile.photos?.length || 0
+        );
         // Clear queued data
         transaction.queuedProfileData = undefined;
       }
@@ -119,6 +129,7 @@ export const handleCallback = async (req, res) => {
     res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });  // Ack even on error
   }
 };
+
 
 // Optional: Validate transaction (if using validation URL)
 export const handleValidation = async (req, res) => {
