@@ -1,9 +1,9 @@
 import Transaction from '../models/Transaction.js';
 import { initiateSTKPush } from '../utils/safaricom.js';
 import Profile from '../models/ProfileSchema.js';  
-import mongoose from 'mongoose';  // Add for ObjectId conversion
+import mongoose from 'mongoose';  
 
-// Initiate payment for account type (called from profile update)
+
 export const initiatePayment = async (req, res) => {
   try {
     const { amount, phone, accountType, duration, profileData } = req.body;  
@@ -13,11 +13,11 @@ export const initiatePayment = async (req, res) => {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
 
-    // Normalize phone
+    
     const normalizedPhone = phone.startsWith('254') ? phone : `254${phone.slice(1)}`;
 
-    // Build unique reference and description
-    const accountRef = `Account-${accountType}-${String(userId).slice(-6)}`;
+    
+    const accountRef = `Account-${accountType}-${Date.now()}`;
     const transactionDesc = `Payment for ${accountType} (${duration} days)`;
 
     // Initiate STK Push first (ensures CheckoutRequestID before DB write)
@@ -39,6 +39,7 @@ export const initiatePayment = async (req, res) => {
       transactionDesc,
       accountType,
       duration,
+      status: 'PENDING',  // Explicitly set initial status
       queuedProfileData: profileData,  // Queue full profile payload (use schema's Mixed field)
     });
 
@@ -76,10 +77,18 @@ export const handleCallback = async (req, res) => {
       return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });  // Ack anyway
     }
 
+    // Idempotency: Skip if already processed (prevents duplicate updates from retry callbacks)
+    if (transaction.status !== 'PENDING') {
+      console.log('🔄 Duplicate callback ignored for already processed tx:', CheckoutRequestID, 'current status:', transaction.status);
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    }
+
     // Update transaction
     transaction.status = ResultCode === 0 ? 'SUCCESS' : 'FAILED';
     transaction.resultCode = ResultCode;
     transaction.resultDesc = ResultDesc;
+
+    console.log(`📝 Updating tx ${CheckoutRequestID}: status="${transaction.status}", resultCode=${ResultCode}, resultDesc="${ResultDesc}"`);
 
     if (ResultCode === 0) {
       // Extract receipt from metadata if success
@@ -121,6 +130,7 @@ export const handleCallback = async (req, res) => {
     }
 
     await transaction.save();
+    console.log(`💾 Saved tx ${CheckoutRequestID} with final status: ${transaction.status}`);
 
     // Always respond 200 OK to M-Pesa to acknowledge (prevents retries)
     res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
@@ -145,9 +155,43 @@ export const getMyTransactions = async (req, res) => {
     const transactions = await Transaction.find({ user: userId })
       .sort({ createdAt: -1 })
       .populate('user', 'username');
+    
+    // Debug log: What we're returning
+    console.log('📊 Returning transactions for user', userId, 
+      transactions.map(t => ({ 
+        checkoutRequestID: t.checkoutRequestID, 
+        status: t.status, 
+        resultCode: t.resultCode, 
+        resultDesc: t.resultDesc?.substring(0, 50) + '...' 
+      }))
+    );
+    
     res.json({ transactions });
   } catch (error) {
     console.error('Get transactions error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// New: Get single transaction status by CheckoutRequestID (GET /api/payments/transaction-status?checkoutRequestID=...)
+export const getTransactionStatus = async (req, res) => {
+  try {
+    const { checkoutRequestID } = req.query;
+    if (!checkoutRequestID) {
+      return res.status(400).json({ error: 'Missing checkoutRequestID' });
+    }
+
+    const tx = await Transaction.findOne({ checkoutRequestID }).lean();
+    if (!tx) {
+      console.log('🔍 No tx found for polling:', checkoutRequestID);
+      return res.status(404).json({ transaction: null });
+    }
+
+    console.log('🔍 Single tx query for polling:', { checkoutRequestID, status: tx.status, resultCode: tx.resultCode, resultDesc: tx.resultDesc?.substring(0, 50) + '...' });
+
+    res.json({ transaction: tx });
+  } catch (error) {
+    console.error('Get tx status error:', error);
     res.status(500).json({ error: error.message });
   }
 };

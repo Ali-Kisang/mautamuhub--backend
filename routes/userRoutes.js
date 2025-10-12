@@ -17,7 +17,7 @@ router.delete("/profile/photos/:publicId", protect, (req, res, next) => {
 router.put("/profile", protect, upload.array("photos", 10), createOrUpdateProfile);
 
 router.get("/profile", protect, getMyProfile);
-router.post('/payments/initiate', protect, initiatePayment);
+router.post('/payments/initiate', protect, initiatePayment); //http://localhost:5000/api/users/payments/initiate
 router.post('/payments/callback', handleCallback);  
 router.post('/payments/validation', handleValidation);  
 router.get('/payments/my-transactions', protect, getMyTransactions);
