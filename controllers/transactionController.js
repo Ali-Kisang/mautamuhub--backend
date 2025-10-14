@@ -1,8 +1,8 @@
 import Transaction from '../models/Transaction.js';
 import { initiateSTKPush } from '../utils/safaricom.js';
 import Profile from '../models/ProfileSchema.js';  
+import User from '../models/User.js'; // ✅ NEW: Import User for balance update
 import mongoose from 'mongoose';  
-
 
 export const initiatePayment = async (req, res) => {
   try {
@@ -13,10 +13,8 @@ export const initiatePayment = async (req, res) => {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
 
-    
     const normalizedPhone = phone.startsWith('254') ? phone : `254${phone.slice(1)}`;
 
-    
     const accountRef = `Account-${accountType}-${Date.now()}`;
     const transactionDesc = `Payment for ${accountType} (${duration} days)`;
 
@@ -56,7 +54,6 @@ export const initiatePayment = async (req, res) => {
   }
 };
 
-
 // Handle M-Pesa Callback (POST /api/payments/callback)
 export const handleCallback = async (req, res) => {
   try {
@@ -95,6 +92,14 @@ export const handleCallback = async (req, res) => {
       if (callback.CallbackMetadata?.Item) {
         const receiptItem = callback.CallbackMetadata.Item.find(item => item.Name === 'MpesaReceiptNumber');
         if (receiptItem) transaction.mpesaReceiptNumber = receiptItem.Value;
+      }
+
+      // ✅ NEW: Add full amount to user balance on success
+      const user = await User.findById(transaction.user);
+      if (user) {
+        user.balance += transaction.amount;  // Add the full paid amount to balance
+        await user.save();
+        console.log(`💰 Added ${transaction.amount} Ksh to balance for user ${user.username || user._id} (new balance: ${user.balance})`);
       }
 
       // Success: Finalize profile update (only now!)
@@ -139,7 +144,6 @@ export const handleCallback = async (req, res) => {
     res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });  // Ack even on error
   }
 };
-
 
 // Optional: Validate transaction (if using validation URL)
 export const handleValidation = async (req, res) => {
@@ -192,6 +196,67 @@ export const getTransactionStatus = async (req, res) => {
     res.json({ transaction: tx });
   } catch (error) {
     console.error('Get tx status error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+// New: Initiate prorate payment for upgrade (GET /api/users/payments/prorate-upgrade?userId=...&amount=...&newType=...)
+export const initiateProratePayment = async (req, res) => {
+  try {
+    const { userId, amount, newType } = req.query;
+    if (!userId || !amount || !newType) {
+      return res.status(400).json({ error: 'Missing userId, amount, or newType' });
+    }
+
+    const parsedAmount = parseInt(amount);
+    if (parsedAmount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    // Fetch user and profile for validation
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const profile = await Profile.findOne({ user: userId }).lean();
+    if (!profile || profile.accountType.type === newType || profile.active === false) {
+      return res.status(400).json({ error: 'Invalid upgrade: No active profile or already upgraded' });
+    }
+
+    // Normalize phone from profile
+    const phone = profile.personal.phone.startsWith('254') ? profile.personal.phone : `254${profile.personal.phone.slice(1)}`;
+
+    // Ref for prorate txn
+    const ref = `Prorate-${newType}-${String(userId).slice(-6)}`;
+    const desc = `Proration for ${newType} upgrade (${parsedAmount} Ksh)`;
+
+    // Initiate STK Push
+    const stkResponse = await initiateSTKPush(phone, parsedAmount, ref, desc);
+
+    // Create prorate txn (no queued data needed; cron or manual update on success)
+    const transaction = await Transaction.create({
+      user: userId,
+      checkoutRequestID: stkResponse.CheckoutRequestID,
+      amount: parsedAmount,
+      phone,
+      accountReference: ref,
+      transactionDesc: desc,
+      accountType: newType,
+      duration: profile.accountType.duration, // Reuse old duration for calc
+      status: 'PENDING',
+      // Optional: Link to original upgrade txn if needed
+    });
+
+    console.log(`💳 Prorate STK initiated: ${stkResponse.CheckoutRequestID} for ${newType} (user ${userId}, amount ${parsedAmount})`);
+    res.json({
+      requiresPayment: true,
+      message: 'Proration payment initiated. Check your phone for M-Pesa PIN prompt.',
+      checkoutRequestID: stkResponse.CheckoutRequestID,
+      transactionId: transaction._id,
+      amount: parsedAmount,
+    });
+  } catch (error) {
+    console.error('Prorate initiation error:', error);
     res.status(500).json({ error: error.message });
   }
 };

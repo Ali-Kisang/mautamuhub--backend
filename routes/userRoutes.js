@@ -4,7 +4,7 @@ import { protect } from "../middleware/authMiddleware.js";
 import { upload } from "../utils/upload.js";
 import { createOrUpdateProfile, getMyProfile, deleteProfilePhoto } from "../controllers/userProfileDataController.js";
 import User from "../models/User.js";
-import { getMyTransactions, handleCallback, handleValidation, initiatePayment } from "../controllers/transactionController.js";
+import { getMyTransactions, handleCallback, handleValidation, initiatePayment, initiateProratePayment } from "../controllers/transactionController.js";
 
 const router = express.Router();
 
@@ -17,27 +17,17 @@ router.delete("/profile/photos/:publicId", protect, (req, res, next) => {
 router.put("/profile", protect, upload.array("photos", 10), createOrUpdateProfile);
 
 router.get("/profile", protect, getMyProfile);
-router.post('/payments/initiate', protect, initiatePayment); //http://localhost:5000/api/users/payments/initiate
+router.post('/payments/initiate', protect, initiatePayment); 
 router.post('/payments/callback', handleCallback);  
 router.post('/payments/validation', handleValidation);  
 router.get('/payments/my-transactions', protect, getMyTransactions);
+
+router.get('/payments/prorate-upgrade', protect, initiateProratePayment);  
 // Other routes (after specific ones)
 router.get("/all", protect, getUsers);
 router.get("/profile/:id", getUserProfile);
 router.get("/check-profile", protect, checkUserProfile);
 router.get("/profile-by-id/:id", getProfileById);
-
-// router.get('/test-mpesa-token', async (req, res) => {
-//   try {
-//     const { getAccessToken } = await import('../utils/safaricom.js');
-//     const token = await getAccessToken();
-//     res.json({ success: true, message: 'Token good!', tokenPreview: token.substring(0, 20) + '...' });
-//   } catch (err) {
-//     console.error('Token test error:', err.response?.data || err.message);
-//     res.status(500).json({ error: err.message, details: err.response?.data });
-//   }
-// });
-
 router.post("/update-push-sub", protect, async (req, res) => {
   try {
     const { subscription } = req.body;

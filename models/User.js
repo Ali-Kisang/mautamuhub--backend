@@ -8,6 +8,11 @@ const userSchema = new mongoose.Schema(
     avatar: { type: String, default: "/default-avatar.png" },
     pushSubscription: { type: Object }, 
     lastSeen: { type: Date, default: Date.now }, 
+    balance: { 
+      type: Number, 
+      default: 0, 
+      min: 0 
+    },
   },
   { 
     timestamps: true,

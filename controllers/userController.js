@@ -60,13 +60,6 @@ export const updateProfile = async (req, res) => {
       photos = existingProfile ? [...(existingProfile.photos || []), ...newPhotos] : newPhotos;
     }
 
-    // ✅ NEW: If updating an expired profile, don't allow unless it's an upgrade (check for amount > 0)
-    const existingProfile = await Profile.findOne({ user: userId });
-    const now = new Date();
-    if (existingProfile && !existingProfile.active && (!accountType.amount || parseInt(accountType.amount) === 0)) {
-      return res.status(400).json({ error: "Profile expired. Upgrade required to update." });
-    }
-
     // Upsert profile (create if none, update if exists)
     const profile = await Profile.findOneAndUpdate(
       { user: userId },
@@ -90,48 +83,14 @@ export const updateProfile = async (req, res) => {
 };
 
 export const getUsers = async (req, res) => {
-  try {
-    const now = new Date();  // ✅ Current time for expiry check
-
-    // ✅ Filter users who have active, non-expired profiles (join via aggregation)
-    const usersWithActiveProfiles = await User.aggregate([
-      {
-        $lookup: {
-          from: 'profiles',  // Collection name
-          localField: '_id',
-          foreignField: 'user',
-          as: 'profile',
-          pipeline: [
-            {
-              $match: {
-                active: true,
-                expiryDate: { $gt: now },
-              },
-            },
-          ],
-        },
-      },
-      {
-        $match: {
-          _id: { $ne: mongoose.Types.ObjectId(req.user.id) },  // Exclude self
-          profile: { $ne: [] },  // Only users with at least one active profile
-        },
-      },
-      {
-        $project: {
-          profile: 0,  // Hide profile data
-        },
-      },
-    ]);
-
-    res.json(usersWithActiveProfiles);
-  } catch (error) {
-    console.error("Error fetching users:", error);
-    res.status(500).json({ error: "Server error" });
-  }
+  const users = await User.find({ _id: { $ne: req.user.id } });
+  res.json(users);
 };
 
 // Get another user's profile by ID
+
+
+// userController.js
 export const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params; 
@@ -140,13 +99,7 @@ export const getUserProfile = async (req, res) => {
       return res.status(400).json({ message: "Invalid user ID" });
     }
 
-    const now = new Date();  // ✅ Current time for expiry check
-
-    const profile = await Profile.findOne({ 
-      user: id, 
-      active: true,  // ✅ Only active
-      expiryDate: { $gt: now },  // ✅ Not expired
-    }).populate("user", "-password -pushSubscription");
+    const profile = await Profile.findOne({ user: id }).populate("user", "-password -pushSubscription");
 
     let userData;
 
@@ -167,6 +120,7 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
+
 // GET /api/users/profile-by-id/:id
 export const getProfileById = async (req, res) => {
   try {
@@ -176,16 +130,10 @@ export const getProfileById = async (req, res) => {
       return res.status(400).json({ message: "Invalid profile ID" });
     }
 
-    const now = new Date();  // ✅ Current time for expiry check
-
-    const profile = await Profile.findOne({ 
-      _id: id, 
-      active: true,  // ✅ Only active
-      expiryDate: { $gt: now },  // ✅ Not expired
-    }).populate("user", "-password");
+    const profile = await Profile.findById(id).populate("user", "-password");
 
     if (!profile) {
-      return res.status(404).json({ message: "Profile not found or inactive" });
+      return res.status(404).json({ message: "Profile not found" });
     }
 
     res.json(profile);
@@ -231,7 +179,8 @@ export const checkUserProfile = async (req, res) => {
     // Return full profile + avatar (includes isTrial, expiryDate for frontend)
     res.status(200).json({ 
       hasProfile: true, 
-      profile,  // ✅ Full profile with new fields
+      profile, 
+      balance: profile.user?.balance || user.balance || 0,
       avatar: user.avatar || null     
     });
   } catch (error) {
@@ -239,3 +188,9 @@ export const checkUserProfile = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+
+
+
+
+

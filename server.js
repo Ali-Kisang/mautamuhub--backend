@@ -13,7 +13,7 @@ import chatRoutes from "./routes/chatRoutes.js";
 import sortAccountTypeRoutes from "./routes/sortAccountTypeRoutes.js";
 import countiesRoutes from "./routes/countiesRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
-import { scheduleTrialExpiry } from "./crons/jobs/trialExpiry.js";
+import { scheduleTrialExpiry, scheduleUpgradeProration } from "./crons/jobs/trialExpiry.js";
 
 
 dotenv.config();
@@ -42,6 +42,7 @@ mongoose
   .then(() => {
     console.log("✅ MongoDB Connected");
     scheduleTrialExpiry();
+    scheduleUpgradeProration();
   })
   .catch((err) => console.error("❌ Mongo Error:", err));
 // ✅ Server & Socket.io

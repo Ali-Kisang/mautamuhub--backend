@@ -22,18 +22,20 @@ const transactionSchema = new mongoose.Schema(
       enum: ['PENDING', 'SUCCESS', 'FAILED', 'CANCELLED'],
       default: 'PENDING',
     },
-    resultCode: String,  // M-Pesa result code (0 = success)
+    resultCode: String,  
     resultDesc: String,
-    // Link to account type being paid for
     accountType: {
       type: String,
       enum: ['Regular', 'VIP', 'VVIP', 'Spa'],
     },
     duration: Number,
-    // ✅ Add this for queuing profile payload (personal, location, etc.) until success
     queuedProfileData: {
-      type: mongoose.Schema.Types.Mixed,  // Flexible for nested objects/arrays
+      type: mongoose.Schema.Types.Mixed, 
     },
+    processed: { type: Boolean, default: false },
+    prorationStatus: { type: String },  
+    prorationAmount: { type: Number, default: 0 },
+    remainingDays: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
