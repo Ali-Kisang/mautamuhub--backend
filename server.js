@@ -53,15 +53,15 @@ mongoose
     scheduleUpgradeProration();
   })
   .catch((err) => console.error("❌ Mongo Error:", err));
+
 // ✅ Server & Socket.io
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: ["https://www.mautamuhub.com", "https://mautamuhub.com", "http://localhost:5173"], methods: ["GET", "POST"] },
 });
 
-
-// Catch-all route to serve the index.html for all other routes
-app.get('/:path(.*)', (req, res) => {
+// Catch-all route to serve the index.html for all other routes (Express 5 compatible)
+app.get('/*path', (req, res) => {
   res.sendFile(path.join(__dirname, "static/index.html"));
 });
 
@@ -166,4 +166,4 @@ io.on("connection", (socket) => {
 });
 
 // ✅ Start server
-server.listen(PORT, () => console.log(" Backend running on port 5000"));
+server.listen(PORT, () => console.log(` Backend running on port ${PORT}`));
