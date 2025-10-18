@@ -1,6 +1,10 @@
 import User from "../models/User.js";
 import Profile from "../models/ProfileSchema.js";
 import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import nodemailer from "nodemailer";
+import 'dotenv/config'; 
 
 export const updateProfile = async (req, res) => {
   try {
@@ -88,9 +92,6 @@ export const getUsers = async (req, res) => {
 };
 
 // Get another user's profile by ID
-
-
-// userController.js
 export const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params; 
@@ -119,7 +120,6 @@ export const getUserProfile = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 // GET /api/users/profile-by-id/:id
 export const getProfileById = async (req, res) => {
@@ -189,8 +189,150 @@ export const checkUserProfile = async (req, res) => {
   }
 };
 
+// POST /api/auth/forgot-password
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    // Validate email
+    if (!email || !/\S+@\S+\.\S+/.test(email)) {
+      return res.status(400).json({ message: 'Valid email is required.' });
+    }
+
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'Email does not exist. Please Register.' });
+    }
+
+    // Generate reset token (expires in 1 hour)
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Save token to user
+    user.resetPasswordToken = token;
+    user.resetPasswordExpires = expires;
+    await user.save();
+
+    // Setup Nodemailer transporter with Hostinger SMTP
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT),
+      secure: process.env.SMTP_PORT === '465', 
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+      tls: {
+        rejectUnauthorized: false, // For self-signed certs; adjust for prod
+      },
+    });
+
+    // Email options
+    const resetUrl = `${process.env.BASE_URL}/reset-password?token=${token}`;
+    const mailOptions = {
+      from: `"Password Reset" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: 'Password Reset Request',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center;">
+  <h2 style="color: #333; font-size: 28px; margin-bottom: 20px; font-weight: bold;">Password Reset</h2>
+  <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">Hello,</p>
+  <p style="color: #555; line-height: 1.6; margin-bottom: 25px;">You requested a password reset. Click the link below to set a new password:</p>
+  <a href="${resetUrl}" style="background: linear-gradient(135deg, #FFC0CB, #FF99CC); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px auto; font-weight: bold; box-shadow: 0 4px 8px rgba(255, 192, 203, 0.3); transition: transform 0.2s ease;">Reset Password</a>
+  <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">This link expires in 1 hour.</p>
+  <p style="color: #777; line-height: 1.6; margin-bottom: 30px; font-style: italic;">If you didn't request this, ignore this email.</p>
+  <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+  <p style="color: #666; line-height: 1.6; margin: 0;">Best,<br><strong>Mautahub Team</strong></p>
+</div>
+      `,
+    };
+
+    // Send email
+    await transporter.sendMail(mailOptions);
+
+    res.status(200).json({ message: 'Password reset email sent successfully.' });
+  } catch (error) {
+    console.error('Forgot Password Error:', error);
+    res.status(500).json({ message: 'Server error. Please try again later.' });
+  }
+};
 
 
 
+export const resetPassword = async (req, res) => {
+  try {
+    
 
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
 
+      return res.status(400).json({ message: 'Token and new password are required.' });
+    }
+
+    if (newPassword.length < 6) {
+      
+      return res.status(400).json({ message: 'Password too short.' });
+    }
+
+    // Verify token (with secret check)
+    let decoded;
+    try {
+      if (!process.env.JWT_SECRET) {
+        throw new Error('JWT_SECRET not set in .env');
+      }
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+     
+    } catch (jwtErr) {
+      
+      return res.status(400).json({ message: 'Invalid token.' });
+    }
+
+    // Validate userId is ObjectId
+    if (!mongoose.Types.ObjectId.isValid(decoded.userId)) {
+      console.log('400: Invalid userId from token'); // Debug
+      return res.status(400).json({ message: 'Invalid token.' });
+    }
+
+    const user = await User.findById(decoded.userId).select('resetPasswordToken resetPasswordExpires');
+    
+
+    if (!user || user.resetPasswordExpires < new Date()) {
+     
+      return res.status(400).json({ message: 'Invalid or expired token.' });
+    }
+
+    // Hash new password
+    let hashedPassword;
+    try {
+      hashedPassword = await bcrypt.hash(newPassword, 12);
+     
+    } catch (hashErr) {
+      
+      return res.status(500).json({ message: 'Password hashing failed.' });
+    }
+
+    // Atomic update (bypass hooks)
+    const updatedUser = await User.findByIdAndUpdate(
+      decoded.userId,
+      {
+        password: hashedPassword,
+        resetPasswordToken: undefined,
+        resetPasswordExpires: undefined,
+      },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+     
+      return res.status(500).json({ message: 'Failed to update password.' });
+    }
+
+   
+
+    res.status(200).json({ message: 'Password reset successful. Please log in.' });
+  } catch (error) {
+    
+    res.status(500).json({ message: 'Server error. Please try again later.' });
+  }
+};

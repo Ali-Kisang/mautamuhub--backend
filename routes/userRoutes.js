@@ -1,5 +1,5 @@
 import express from "express";
-import { updateProfile, getUsers, getUserProfile, checkUserProfile, getProfileById } from "../controllers/userController.js";
+import {  getUsers, getUserProfile, checkUserProfile, getProfileById, forgotPassword, resetPassword } from "../controllers/userController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { upload } from "../utils/upload.js";
 import { createOrUpdateProfile, getMyProfile, deleteProfilePhoto } from "../controllers/userProfileDataController.js";
@@ -21,7 +21,8 @@ router.post('/payments/initiate', protect, initiatePayment);
 router.post('/payments/callback', handleCallback);  
 router.post('/payments/validation', handleValidation);  
 router.get('/payments/my-transactions', protect, getMyTransactions);
-
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
 router.get('/payments/prorate-upgrade', protect, initiateProratePayment);  
 // Other routes (after specific ones)
 router.get("/all", protect, getUsers);

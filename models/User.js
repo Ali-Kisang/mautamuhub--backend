@@ -1,4 +1,5 @@
-import mongoose from "mongoose";  
+import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
@@ -13,6 +14,8 @@ const userSchema = new mongoose.Schema(
       default: 0, 
       min: 0 
     },
+    resetPasswordToken: { type: String }, 
+    resetPasswordExpires: { type: Date },
   },
   { 
     timestamps: true,
@@ -23,6 +26,13 @@ const userSchema = new mongoose.Schema(
     ]
   }
 );
+
+// Pre-save hook: Hash password if modified
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
+});
 
 const User = mongoose.model("User", userSchema);
 export default User;
