@@ -14,6 +14,7 @@ import sortAccountTypeRoutes from "./routes/sortAccountTypeRoutes.js";
 import countiesRoutes from "./routes/countiesRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import { scheduleTrialExpiry, scheduleUpgradeProration } from "./crons/jobs/trialExpiry.js";
+import path from "path";
 
 
 dotenv.config();
@@ -50,6 +51,12 @@ mongoose
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: ["https://www.mautamuhub.com", "https://mautamuhub.com", "http://localhost:5173"], methods: ["GET", "POST"] },
+});
+
+
+// Catch-all route to serve the index.html for all other routes
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "static/index.html"));
 });
 app.set('io', io);
 

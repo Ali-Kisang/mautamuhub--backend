@@ -225,7 +225,7 @@ export const forgotPassword = async (req, res) => {
         pass: process.env.SMTP_PASS,
       },
       tls: {
-        rejectUnauthorized: false, // For self-signed certs; adjust for prod
+        rejectUnauthorized: false, 
       },
     });
 
