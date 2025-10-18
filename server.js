@@ -166,4 +166,21 @@ io.on("connection", (socket) => {
 });
 
 // ✅ Start server
-server.listen(PORT, () => console.log(` Backend running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(` Backend running on port ${PORT}`);
+  const addr = server.address();
+  if (addr) {
+    console.log(`🔍 Bound to: ${addr.family} ${addr.address}:${addr.port}`);
+  } else {
+    console.error("❌ No bind address!");
+  }
+});
+
+// Add error handler (catches bind fails)
+server.on('error', (err) => {
+  console.error("❌ Bind error:", err.code, err.message);
+  if (err.code === 'EADDRINUSE') {
+    console.log("🔄 Port 5000 in use—run sudo lsof -i :5000 to kill");
+  }
+  process.exit(1);
+});
