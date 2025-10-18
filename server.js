@@ -15,6 +15,11 @@ import countiesRoutes from "./routes/countiesRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
 import { scheduleTrialExpiry, scheduleUpgradeProration } from "./crons/jobs/trialExpiry.js";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 
 dotenv.config();
@@ -59,6 +64,7 @@ const io = new Server(server, {
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "static/index.html"));
 });
+
 app.set('io', io);
 
 // ✅ Online Users List
