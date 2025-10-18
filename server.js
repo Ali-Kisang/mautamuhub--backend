@@ -61,7 +61,7 @@ const io = new Server(server, {
 
 
 // Catch-all route to serve the index.html for all other routes
-app.get("*", (req, res) => {
+app.get('/:path(.*)', (req, res) => {
   res.sendFile(path.join(__dirname, "static/index.html"));
 });
 
