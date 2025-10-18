@@ -18,7 +18,7 @@ export const scheduleTrialExpiry = () => {
         expiryDate: { $lte: today },
       }).populate('user', 'username email');
       if (expiredProfiles.length === 0) {
-        console.log('✅ No expiries today.');
+        
         return;
       }
       const profileIds = expiredProfiles.map(p => p._id);
@@ -42,86 +42,100 @@ export const scheduleTrialExpiry = () => {
       console.error('❌ Expiry cron error:', error);
     }
   }, { timezone: 'Africa/Nairobi' });
-  console.log('🔄 Unified expiry cron with notifications scheduled (daily at midnight).');
 };
 
 // Existing: sendExpiryNotification
+// Updated: sendExpiryNotification (using Hostinger SMTP and enhanced alert-style template)
 const sendExpiryNotification = async (profile) => {
   const { default: nodemailer } = await import('nodemailer');  
   const transporter = nodemailer.createTransporter({
-    service: 'gmail',
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT),
+    secure: process.env.SMTP_PORT === '465', 
     auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false, 
     },
   });
   const { user, accountType, isTrial } = profile;
   const type = accountType?.type || 'account';
   const trialText = isTrial ? 'trial' : 'subscription';
-  const upgradeLink = `https://yourapp.com/upgrade?userId=${user._id}`;
+  const upgradeLink = `https://mautamuhub.com/upgrade?userId=${user._id}`;
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: `"Mautamuhub Alerts" <${process.env.SMTP_USER}>`,
     to: user.email,
-    subject: `Your ${type} ${trialText} has expired – Upgrade today!`,
+    subject: `🚨 Alert: Your ${type} ${trialText} has expired – Reactivate now!`,
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #ec4899;">Hi ${user.username || 'User'},</h2>
-        <p>Your 7-day free ${type} trial has ended. You've been unlisted, but you can reactivate with a quick upgrade!</p>
-        <ul style="color: #666;">
-          <li>Enjoy priority visibility and more features.</li>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center;">
+        <h2 style="color: #ec4899; font-size: 28px; margin-bottom: 20px; font-weight: bold;">Subscription Expired Alert</h2>
+        <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">Hello ${user.username || 'User'},</p>
+        <p style="color: #555; line-height: 1.6; margin-bottom: 25px;">Your ${type} ${trialText} has expired. You've been unlisted from the directory. Reactivate to regain visibility and features!</p>
+        <ul style="color: #666; text-align: left; max-width: 400px; margin: 0 auto 25px;">
+          <li>Priority listing and enhanced visibility.</li>
           <li>${type} plan: Ksh ${accountType?.amount || 0} for ${accountType?.duration || 7} days.</li>
+          <li>Quick reactivation in under 2 minutes.</li>
         </ul>
-        <a href="${upgradeLink}" style="background: #ec4899; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Upgrade Now</a>
-        <p style="font-size: 12px; color: #999; margin-top: 20px;">Need help? Reply to this email or visit <a href="https://yourapp.com/support">support</a>.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="font-size: 11px; color: #ccc;">This is an automated message from YourApp. © 2025</p>
+        <a href="${upgradeLink}" style="background: linear-gradient(135deg, #FFC0CB, #FF99CC); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px auto; font-weight: bold; box-shadow: 0 4px 8px rgba(255, 192, 203, 0.3); transition: transform 0.2s ease;">Reactivate Now</a>
+        <p style="color: #777; line-height: 1.6; margin-bottom: 30px; font-style: italic;">Act within 24 hours for a special reactivation discount!</p>
+        <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="color: #666; line-height: 1.6; margin: 0;">Best regards,<br><strong>Mautamuhub Team</strong></p>
       </div>
     `,
   };
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`📧 Expiry email sent to ${user.email} for ${type} ${trialText}`);
   } catch (error) {
-    console.error(`❌ Failed to send email to ${user.email}:`, error.message);
+    console.error(`❌ Failed to send expiry alert email to ${user.email}:`, error.message);
   }
 };
 
-// New: sendUpgradePromptEmail
+// Updated: sendUpgradePromptEmail (using Hostinger SMTP and enhanced alert-style template)
 const sendUpgradePromptEmail = async (user, upgradeDetails) => {
   const { default: nodemailer } = await import('nodemailer');  
   const transporter = nodemailer.createTransporter({
-    service: 'gmail',
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT),
+    secure: process.env.SMTP_PORT === '465', 
     auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    tls: {
+      rejectUnauthorized: false, 
     },
   });
   const { email, username } = user;
   const { oldType, newType, remainingDays, proratedAmount, neededAmount } = upgradeDetails;
-  const paymentLink = `https://yourapp.com/payments/prorate-upgrade?userId=${user._id}&amount=${neededAmount}&newType=${newType}`;
+  const paymentLink = `https://mautamuhub.com/payments/prorate-upgrade?userId=${user._id}&amount=${neededAmount}&newType=${newType}`;
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: `"Mautamuhub Alerts" <${process.env.SMTP_USER}>`,
     to: email,
-    subject: `Complete Your ${newType} Upgrade – Pay ${neededAmount} Ksh Proration`,
+    subject: `🚨 Alert: Complete Your ${newType} Upgrade – Pay ${neededAmount} Ksh Proration Now`,
     html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #ec4899;">Hi ${username},</h2>
-        <p>Congratulations on upgrading from ${oldType} to ${newType}! We've detected ${remainingDays} days left on your current plan.</p>
-        <p>To activate your new plan immediately, pay the prorated difference: <strong>${proratedAmount} Ksh</strong>.</p>
-        <p>Your current balance: <strong>${user.balance || 0} Ksh</strong><br>
-        Amount needed: <strong>${neededAmount} Ksh</strong></p>
-        <a href="${paymentLink}" style="background: #ec4899; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Pay Proration Now</a>
-        <p style="font-size: 12px; color: #999; margin-top: 20px;">This will extend your subscription seamlessly. Need help? Reply to this email or visit <a href="https://yourapp.com/support">support</a>.</p>
-        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-        <p style="font-size: 11px; color: #ccc;">This is an automated message from YourApp. © 2025</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center;">
+        <h2 style="color: #ec4899; font-size: 28px; margin-bottom: 20px; font-weight: bold;">Upgrade Proration Alert</h2>
+        <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">Hi ${username},</p>
+        <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">Congratulations on selecting the ${newType} upgrade from ${oldType}! We detected ${remainingDays} days remaining on your current plan.</p>
+        <p style="color: #555; line-height: 1.6; margin-bottom: 25px;">To activate immediately and avoid downtime, complete the prorated payment: <strong>${proratedAmount} Ksh</strong>.</p>
+        <ul style="color: #666; text-align: left; max-width: 400px; margin: 0 auto 25px;">
+          <li>Your balance: <strong>${user.balance || 0} Ksh</strong></li>
+          <li>Amount needed: <strong>${neededAmount} Ksh</strong></li>
+          <li>Seamless extension – no interruptions!</li>
+        </ul>
+        <a href="${paymentLink}" style="background: linear-gradient(135deg, #FFC0CB, #FF99CC); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px auto; font-weight: bold; box-shadow: 0 4px 8px rgba(255, 192, 203, 0.3); transition: transform 0.2s ease;">Pay Proration & Activate</a>
+        <p style="color: #777; line-height: 1.6; margin-bottom: 30px; font-style: italic;">Complete within 30 minutes to lock in your upgrade. Questions? Reply to this email.</p>
+        <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+        <p style="color: #666; line-height: 1.6; margin: 0;">Best regards,<br><strong>Mautamuhub Team</strong></p>
       </div>
     `,
   };
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`📧 Proration prompt email sent to ${email} for ${newType} (needed: ${neededAmount} Ksh)`);
   } catch (error) {
-    console.error(`❌ Failed to send proration email to ${email}:`, error.message);
+    console.error(`❌ Failed to send upgrade alert email to ${email}:`, error.message);
   }
 };
 
@@ -142,7 +156,6 @@ export const scheduleUpgradeProration = () => {
         select: 'username email balance phone',
       });
       if (recentUpgrades.length === 0) {
-        console.log('✅ No recent upgrades to process.');
         return;
       }
       for (const txn of recentUpgrades) {
@@ -150,7 +163,6 @@ export const scheduleUpgradeProration = () => {
         const userId = user._id;
         const oldProfile = await Profile.findOne({ user: userId }).lean();
         if (!oldProfile || oldProfile.accountType.type === newType || !oldProfile.active) {
-          console.log(`⏭️ Skipping ${user.username}: No valid old profile or no type change.`);
           await Transaction.findByIdAndUpdate(txn._id, { $set: { processed: true } });
           continue;
         }
@@ -187,7 +199,6 @@ export const scheduleUpgradeProration = () => {
               },
             }
           );
-          console.log(`✅ Proration processed for ${user.username}: Used ${proratedAdditional} Ksh from balance. New expiry: ${newExpiry.toISOString().split('T')[0]}`);
           status = 'processed';
           neededAmount = 0;
         } else {
@@ -199,7 +210,6 @@ export const scheduleUpgradeProration = () => {
             proratedAmount,
             neededAmount,
           });
-          console.log(`⚠️ Proration prompt sent to ${user.username}: Need ${neededAmount} Ksh (balance: ${user.balance || 0})`);
         }
         await Transaction.findByIdAndUpdate(txn._id, { 
           $set: { 

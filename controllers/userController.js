@@ -143,45 +143,46 @@ export const getProfileById = async (req, res) => {
   }
 };
 
-// Check if user has a profile and if active (GET /api/users/check-profile)
+// Check if user has a profile (GET /api/users/check-profile)
 export const checkUserProfile = async (req, res) => {
   try {
     const userId = mongoose.Types.ObjectId.isValid(req.user.id) 
       ? new mongoose.Types.ObjectId(req.user.id) 
       : req.user.id;
 
-    // Ensure user exists (with avatar)
-    const user = await User.findById(userId).select("-password");
+    // Ensure user exists (with balance & avatar) – use inclusion projection
+    const user = await User.findById(userId).select("email username avatar balance");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Check if profile exists for this user
-    let profile = await Profile.findOne({ user: userId }).populate("user", "-password");
+    // ✅ Fetch profile without 'active' filter – returns expired too
+    const profile = await Profile.findOne({ user: userId })
+      .populate("user", "email username avatar balance")  // ✅ Inclusion projection (no password)
+      .lean();  // Faster read-only
 
-    // ✅ NEW: If profile exists but expired (expiryDate passed), deactivate it
-    if (profile && profile.active && profile.expiryDate && new Date() > new Date(profile.expiryDate)) {
-      await Profile.findByIdAndUpdate(profile._id, { active: false });
-      profile = await Profile.findById(profile._id).populate("user", "-password");  // Refetch updated
-      console.log(`⏰ Auto-deactivated expired profile for user: ${userId} (was ${profile.accountType?.type} ${profile.isTrial ? 'trial' : 'paid'})`);
-    }
+    const hasProfile = !!profile;  // true if doc exists (active or not)
+    const balance = profile?.user?.balance || user.balance || 0;  // Prioritize populated
 
-    if (!profile || !profile.active) { 
+    if (!profile) {
+      
       return res.status(200).json({ 
         hasProfile: false, 
-        avatar: user.avatar || null,   
-        message: profile && !profile.active 
-          ? `${profile.isTrial ? 'Trial' : 'Subscription'} expired. Please upgrade to reactivate.` 
-          : "Profile not found. Please create one." 
+        profile: null, 
+        balance,
+        avatar: user.avatar || null,
+        message: "Profile not found. Please create one." 
       });
     }
 
-    // Return full profile + avatar (includes isTrial, expiryDate for frontend)
+    // ✅ Log expiry status (no auto-deactivate here – cron handles)
+    const isExpired = !profile.active;
+    
     res.status(200).json({ 
       hasProfile: true, 
-      profile, 
-      balance: profile.user?.balance || user.balance || 0,
-      avatar: user.avatar || null     
+      profile,  // Full doc (active or expired)
+      balance,
+      avatar: user.avatar || null 
     });
   } catch (error) {
     console.error("Check profile error:", error);

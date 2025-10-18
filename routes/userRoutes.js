@@ -9,10 +9,7 @@ import { getMyTransactions, handleCallback, handleValidation, initiatePayment, i
 const router = express.Router();
 
 // 👉 Move DELETE to TOP for priority matching (before any other routes)
-router.delete("/profile/photos/:publicId", protect, (req, res, next) => {
- 
-  next();
-}, deleteProfilePhoto);
+router.delete("/profile/photos/:publicId", protect, deleteProfilePhoto);
 
 router.put("/profile", protect, upload.array("photos", 10), createOrUpdateProfile);
 
@@ -29,6 +26,10 @@ router.get("/all", protect, getUsers);
 router.get("/profile/:id", getUserProfile);
 router.get("/check-profile", protect, checkUserProfile);
 router.get("/profile-by-id/:id", getProfileById);
+// Add this as first route in userRoutes.js
+router.get("/test", (req, res) => {
+  res.json({ message: "User routes mounted OK", user: req.user ? req.user._id : "No user" });
+});
 router.post("/update-push-sub", protect, async (req, res) => {
   try {
     const { subscription } = req.body;

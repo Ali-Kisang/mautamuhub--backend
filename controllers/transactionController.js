@@ -76,7 +76,6 @@ export const handleCallback = async (req, res) => {
 
     // Idempotency: Skip if already processed (prevents duplicate updates from retry callbacks)
     if (transaction.status !== 'PENDING') {
-      console.log('🔄 Duplicate callback ignored for already processed tx:', CheckoutRequestID, 'current status:', transaction.status);
       return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
@@ -84,8 +83,6 @@ export const handleCallback = async (req, res) => {
     transaction.status = ResultCode === 0 ? 'SUCCESS' : 'FAILED';
     transaction.resultCode = ResultCode;
     transaction.resultDesc = ResultDesc;
-
-    console.log(`📝 Updating tx ${CheckoutRequestID}: status="${transaction.status}", resultCode=${ResultCode}, resultDesc="${ResultDesc}"`);
 
     if (ResultCode === 0) {
       // Extract receipt from metadata if success
