@@ -20,7 +20,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-
+const PORT = process.env.PORT || 5000;
 
 dotenv.config();
 const app = express();
@@ -166,4 +166,4 @@ io.on("connection", (socket) => {
 });
 
 // ✅ Start server
-server.listen(5000, () => console.log(" Backend running on port 5000"));
+server.listen(PORT, () => console.log(" Backend running on port 5000"));
