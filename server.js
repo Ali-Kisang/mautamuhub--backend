@@ -22,7 +22,7 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 5000;
 
-dotenv.config();
+dotenv.config({ debug: true });  // Enable debug for .env loading verification (remove in prod)
 const app = express();
 
 // ✅ Middlewares
@@ -44,6 +44,15 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/accounts", sortAccountTypeRoutes);
 app.use("/api/counties", countiesRoutes);
 app.use("/api/search", searchRoutes);
+
+// Temp health check endpoint (remove after testing)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    mongo: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    env: { MONGO_URI: !!process.env.MONGO_URI, JWT_SECRET: !!process.env.JWT_SECRET } 
+  });
+});
 
 mongoose
   .connect(process.env.MONGO_URI)
@@ -165,8 +174,8 @@ io.on("connection", (socket) => {
   });
 });
 
-// ✅ Start server
-server.listen(PORT, () => {
+// ✅ Start server (Fixed: Bind to '0.0.0.0' for IPv4/IPv6 dual-stack)
+server.listen(PORT, '0.0.0.0', () => {
   console.log(` Backend running on port ${PORT}`);
   const addr = server.address();
   if (addr) {
