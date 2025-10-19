@@ -9,6 +9,8 @@ dotenv.config();
 export const register = async (req, res) => {
   try {
     const { username, email, password } = req.body;
+    console.log('📧 Register attempt - Raw email:', `"${email}"`);
+    console.log('📧 Register attempt - Lower/trimmed email:', email.toLowerCase().trim());
 
     // Validate inputs
     if (!username || !email || !password) {
@@ -22,39 +24,56 @@ export const register = async (req, res) => {
     }
 
     // Check for existing user (by email or username)
+    const queryEmail = email.toLowerCase().trim();
+    const queryUsername = username.trim();
+    console.log('🔍 Querying DB for email:', queryEmail, 'or username:', queryUsername);
+
     const existingUser = await User.findOne({ 
-      $or: [{ email: email.toLowerCase().trim() }, { username: username.trim() }] 
+      $or: [{ email: queryEmail }, { username: queryUsername }] 
     });
+    console.log('🔍 DB result - Existing user found?', !!existingUser, existingUser?._id);
+
     if (existingUser) {
-      return res.status(400).json({ error: "A user with this email or username already exists." });
+      const conflictField = existingUser.email === queryEmail ? 'email' : 'username';
+      console.log(`🚫 Duplicate on ${conflictField} - User: ${existingUser._id}`);
+      return res.status(400).json({ 
+        error: `A user with this ${conflictField} already exists.`, 
+        field: conflictField 
+      });
     }
 
+    
+    let avatar = "/default-avatar.png";
+   
+
     // Upload avatar to Cloudinary if provided
-    let avatar = "/default-avatar.png"; // default
     if (req.file) {
       try {
+        console.log('🖼️ Uploading file:', req.file.path);
         avatar = await uploadEscortPhotos(req.file.path);
-        // ✅ Remove local file after uploading to Cloudinary
+    
         fs.unlink(req.file.path, (err) => {
           if (err) console.error("Error deleting temp file:", err);
         });
+      
       } catch (uploadErr) {
-        console.error("Avatar upload error:", uploadErr);
+       
         return res.status(500).json({ error: "Failed to upload avatar." });
       }
+    } else {
+      console.log('🖼️ No file provided - Using default');
     }
 
-    // Hash password (updated to 12 rounds for better security)
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Create new new user
     const user = new User({
-      username: username.trim(),
-      email: email.toLowerCase().trim(),
-      password: hashedPassword,
-      avatar,
+      username: queryUsername,
+      email: queryEmail,
+      password, 
+      avatar, 
     });
-    await user.save();
+    console.log('💾 Saving new user with ID:', user._id, 'Avatar:', avatar);
+
+    await user.save(); 
+    
 
     // Generate JWT token (expires in 7 days)
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "7d" });
@@ -67,7 +86,7 @@ export const register = async (req, res) => {
       token,
     });
   } catch (error) {
-    console.error("Registration error:", error);
+ 
     res.status(500).json({ error: "Server error. Please try again later." });
   }
 };
