@@ -5,7 +5,8 @@ import mongoose from 'mongoose';
 import ProfileSchema from '../../models/ProfileSchema.js';
 import User from '../../models/User.js';
 import Transaction from '../../models/Transaction.js';
-
+import dotenv from 'dotenv';
+dotenv.config();
 // Existing: Trial Expiry Cron
 export const scheduleTrialExpiry = () => {
   cron.schedule('0 0 * * *', async () => {

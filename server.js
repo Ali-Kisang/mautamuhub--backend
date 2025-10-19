@@ -22,7 +22,7 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 5000;
 
-dotenv.config({ debug: true });  // Enable debug for .env loading verification (remove in prod)
+dotenv.config();  
 const app = express();
 
 // ✅ Middlewares
@@ -45,14 +45,7 @@ app.use("/api/accounts", sortAccountTypeRoutes);
 app.use("/api/counties", countiesRoutes);
 app.use("/api/search", searchRoutes);
 
-// Temp health check endpoint (remove after testing)
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    mongo: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
-    env: { MONGO_URI: !!process.env.MONGO_URI, JWT_SECRET: !!process.env.JWT_SECRET } 
-  });
-});
+
 
 mongoose
   .connect(process.env.MONGO_URI)
@@ -70,7 +63,7 @@ const io = new Server(server, {
 });
 
 // Catch-all route to serve the index.html for all other routes (Express 5 compatible)
-app.get('/*path', (req, res) => {
+app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, "static/index.html"));
 });
 

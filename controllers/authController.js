@@ -3,7 +3,8 @@ import bcrypt from "bcryptjs"; // Updated: Use bcryptjs for consistency (or keep
 import jwt from "jsonwebtoken";
 import { uploadEscortPhotos } from "../utils/cloudinary.js";
 import fs from "fs";
-
+import dotenv from 'dotenv';
+dotenv.config();
 // POST /api/auth/register (handles multipart/form-data with optional avatar)
 export const register = async (req, res) => {
   try {

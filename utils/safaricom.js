@@ -1,6 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';  
-
+import dotenv from 'dotenv';
+dotenv.config();
 // Generate M-Pesa timestamp (YYYYMMDDHHmmss)
 export const getTimestamp = () => {
   const now = new Date();

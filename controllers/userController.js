@@ -4,7 +4,8 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
-import 'dotenv/config'; 
+import dotenv from 'dotenv';
+dotenv.config();
 
 export const updateProfile = async (req, res) => {
   try {
