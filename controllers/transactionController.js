@@ -1,7 +1,7 @@
 import Transaction from '../models/Transaction.js';
 import { initiateSTKPush } from '../utils/safaricom.js';
 import Profile from '../models/ProfileSchema.js';  
-import User from '../models/User.js'; // ✅ NEW: Import User for balance update
+import User from '../models/User.js'; 
 import mongoose from 'mongoose';  
 
 export const initiatePayment = async (req, res) => {
