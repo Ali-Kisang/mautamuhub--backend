@@ -33,9 +33,9 @@ app.use(
   })
 );
 
+app.use(express.static(path.join(__dirname, "static")));
 app.use(express.json({ limit: '10mb' })); 
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static(path.join(__dirname, "static")));
 app.use("/uploads", express.static("uploads"));
 
 app.use("/api/auth", authRoutes); 
@@ -62,9 +62,16 @@ const io = new Server(server, {
   cors: { origin: ["https://www.mautamuhub.com", "https://mautamuhub.com", "http://localhost:5173"], methods: ["GET", "POST"] },
 });
 
-// Catch-all route to serve the index.html for all other routes (Express 5 compatible)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, "static/index.html"));
+  // Prevent serving index.html for JS, CSS, or API routes
+  if (
+    req.originalUrl.startsWith('/api') ||
+    req.originalUrl.includes('.')
+  ) {
+    return res.status(404).end(); 
+  }
+
+  res.sendFile(path.join(__dirname, 'static', 'index.html'));
 });
 
 app.set('io', io);
