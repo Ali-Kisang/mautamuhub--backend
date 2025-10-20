@@ -190,7 +190,6 @@ export const checkUserProfile = async (req, res) => {
   }
 };
 
-// POST /api/auth/forgot-password
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -225,7 +224,7 @@ export const forgotPassword = async (req, res) => {
     await user.save();
 
     // Setup Nodemailer transporter with Hostinger SMTP (tweaked for port 587)
-    const transporter = nodemailer.createTransporter({
+    const transporter = nodemailer.createTransport({  // Fixed: createTransport, not createTransporter
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT),
       secure: false, // For port 587 with STARTTLS
@@ -258,7 +257,7 @@ export const forgotPassword = async (req, res) => {
     // Email options
     const resetUrl = `${process.env.BASE_URL}/reset-password?token=${token}`;
     const mailOptions = {
-      from: `"Reset Your Password" <${process.env.SMTP_USER}>`,
+      from: `"Password Reset" <${process.env.SMTP_USER}>`,
       to: email,
       subject: 'Password Reset Request',
       html: `
