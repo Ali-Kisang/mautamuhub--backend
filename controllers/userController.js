@@ -200,6 +200,15 @@ export const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: 'Valid email is required.' });
     }
 
+    // Log env vars for debugging (remove in production)
+    console.log('Loaded SMTP creds:', {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS ? '***LOADED***' : 'MISSING',
+      baseUrl: process.env.BASE_URL
+    });
+
     // Find user
     const user = await User.findOne({ email });
     if (!user) {
@@ -215,52 +224,68 @@ export const forgotPassword = async (req, res) => {
     user.resetPasswordExpires = expires;
     await user.save();
 
-    // Setup Nodemailer transporter with Hostinger SMTP
-    const transporter = nodemailer.createTransport({
+    // Setup Nodemailer transporter with Hostinger SMTP (tweaked for port 587)
+    const transporter = nodemailer.createTransporter({
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT),
-      secure: process.env.SMTP_PORT === '465', 
+      secure: false, // For port 587 with STARTTLS
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
-      tls: {
-        rejectUnauthorized: false, 
-      },
+      // Removed tls block to let Nodemailer handle STARTTLS naturally
     });
+
+    // Verify SMTP connection
+    console.log('Attempting SMTP verify...');
+    try {
+      await new Promise((resolve, reject) => {
+        transporter.verify((error, success) => {
+          if (error) {
+            console.error('SMTP Verify Error:', error.message);
+            reject(error);
+          } else {
+            console.log('SMTP Server is ready to take our messages');
+            resolve(success);
+          }
+        });
+      });
+    } catch (verifyErr) {
+      console.error('SMTP Verify Failed:', verifyErr);
+      return res.status(500).json({ message: 'SMTP connection failed. Please try again later.' });
+    }
 
     // Email options
     const resetUrl = `${process.env.BASE_URL}/reset-password?token=${token}`;
     const mailOptions = {
-      from: `"Password Reset" <${process.env.SMTP_USER}>`,
+      from: `"Reset Your Password" <${process.env.SMTP_USER}>`,
       to: email,
       subject: 'Password Reset Request',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center;">
-  <h2 style="color: #333; font-size: 28px; margin-bottom: 20px; font-weight: bold;">Password Reset</h2>
-  <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">Hello,</p>
-  <p style="color: #555; line-height: 1.6; margin-bottom: 25px;">You requested a password reset. Click the link below to set a new password:</p>
-  <a href="${resetUrl}" style="background: linear-gradient(135deg, #FFC0CB, #FF99CC); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px auto; font-weight: bold; box-shadow: 0 4px 8px rgba(255, 192, 203, 0.3); transition: transform 0.2s ease;">Reset Password</a>
-  <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">This link expires in 1 hour.</p>
-  <p style="color: #777; line-height: 1.6; margin-bottom: 30px; font-style: italic;">If you didn't request this, ignore this email.</p>
-  <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
-  <p style="color: #666; line-height: 1.6; margin: 0;">Best,<br><strong>Mautahub Team</strong></p>
-</div>
+          <h2 style="color: #333; font-size: 28px; margin-bottom: 20px; font-weight: bold;">Password Reset</h2>
+          <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">Hello,</p>
+          <p style="color: #555; line-height: 1.6; margin-bottom: 25px;">You requested a password reset. Click the link below to set a new password:</p>
+          <a href="${resetUrl}" style="background: linear-gradient(135deg, #FFC0CB, #FF99CC); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px auto; font-weight: bold; box-shadow: 0 4px 8px rgba(255, 192, 203, 0.3); transition: transform 0.2s ease;">Reset Password</a>
+          <p style="color: #555; line-height: 1.6; margin-bottom: 15px;">This link expires in 1 hour.</p>
+          <p style="color: #777; line-height: 1.6; margin-bottom: 30px; font-style: italic;">If you didn't request this, ignore this email.</p>
+          <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+          <p style="color: #666; line-height: 1.6; margin: 0;">Best,<br><strong>Mautahub Team</strong></p>
+        </div>
       `,
     };
 
     // Send email
+    console.log('Sending email to:', email);
     await transporter.sendMail(mailOptions);
+    console.log('Email sent successfully!');
 
     res.status(200).json({ message: 'Password reset email sent successfully.' });
   } catch (error) {
-    console.error('Forgot Password Error:', error);
+    console.error('Forgot Password Error:', error.message, error.stack);
     res.status(500).json({ message: 'Server error. Please try again later.' });
   }
 };
-
-
-
 export const resetPassword = async (req, res) => {
   try {
     
