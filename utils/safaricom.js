@@ -1,24 +1,23 @@
 import axios from 'axios';
 import crypto from 'crypto';  
 import dotenv from 'dotenv';
-import fs from 'fs';  // For file logging (optional, for VPS persistence)
-dotenv.config();
+import fs from 'fs';  // For file logging
+dotenv.config();  // Load early
 
-// Helper to log to console + file (for debugging on VPS)
+// Helper to log to console + file
 const logMpesa = (message, data = null) => {
   const logMsg = `${new Date().toISOString()} - ${message}${data ? `\n${JSON.stringify(data, null, 2)}` : ''}`;
   console.log(logMsg);
-  // Optional: Write to file for PM2 logs
   try {
     fs.appendFileSync('./mpesa-logs.txt', logMsg + '\n\n');
   } catch (err) {
-    // Ignore file write errors
+    // Ignore
   }
 };
 
 // Generate M-Pesa timestamp (YYYYMMDDHHmmss) in EAT (Africa/Nairobi - UTC+3)
 export const getTimestamp = () => {
-  const now = new Date().toLocaleString("sv", { timeZone: "Africa/Nairobi" });  // EAT format
+  const now = new Date().toLocaleString("sv", { timeZone: "Africa/Nairobi" });
   const year = now.slice(0, 4);
   const month = now.slice(5, 7);
   const day = now.slice(8, 10);
@@ -30,7 +29,7 @@ export const getTimestamp = () => {
   return timestamp;
 };
 
-// Generate Lipa na M-Pesa password (Base64 of Shortcode + Passkey + Timestamp)
+// Generate Lipa na M-Pesa password
 export const generatePassword = (shortcode, passkey, timestamp) => {
   const plain = `${shortcode}${passkey}${timestamp}`;
   const password = Buffer.from(plain).toString('base64');
@@ -38,7 +37,7 @@ export const generatePassword = (shortcode, passkey, timestamp) => {
   return password;
 };
 
-// Get OAuth access token - Enhanced with logging
+// Get OAuth access token
 export const getAccessToken = async () => {
   const consumerKey = process.env.MPESA_CONSUMER_KEY;
   const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
@@ -78,7 +77,7 @@ export const getAccessToken = async () => {
   }
 };
 
-// Initiate STK Push (Lipa na M-Pesa Online) - Enhanced logging
+// Initiate STK Push
 export const initiateSTKPush = async (phone, amount, accountRef, transactionDesc, shortcode = process.env.MPESA_SHORTCODE) => {
   logMpesa(`STK Push params: phone=${phone}, amount=${amount}, ref=${accountRef}, desc=${transactionDesc}, shortcode=${shortcode}`);
 

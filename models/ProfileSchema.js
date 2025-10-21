@@ -65,19 +65,19 @@ const profileSchema = new mongoose.Schema(
       required: true,  
     },
 
-    // ✅ Active status for expiry (default true)
+    // Active status for expiry (default true)
     active: {
       type: Boolean,
       default: true,
     },
 
-    // ✅ New: Trial flag (true if in 7-day free trial for this account type)
+    // Trial flag (true if in 7-day free trial for this account type)
     isTrial: {
       type: Boolean,
       default: false,
     },
 
-    // ✅ New: Expiry date for trial or paid period
+    // Expiry date for trial or paid period
     expiryDate: {
       type: Date,
       default: null,
@@ -85,5 +85,9 @@ const profileSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// ✅ FIX: Add indexes for fast queries
+profileSchema.index({ expiryDate: 1, active: 1 });
+profileSchema.index({ user: 1 });
 
 export default mongoose.model("Profile", profileSchema);

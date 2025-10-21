@@ -18,7 +18,22 @@ export const initiatePayment = async (req, res) => {
     const accountRef = `Account-${accountType}-${Date.now()}`;
     const transactionDesc = `Payment for ${accountType} (${duration} days)`;
 
-    // Initiate STK Push first (ensures CheckoutRequestID before DB write)
+    // ✅ FIX: Create tx FIRST (pending) to avoid race in callback
+    const transaction = await Transaction.create({
+      user: userId,
+      amount,
+      phone: normalizedPhone,
+      accountReference: accountRef,
+      transactionDesc,
+      accountType,
+      duration,
+      status: 'PENDING',
+      queuedProfileData: profileData,
+    });
+
+    console.log(`🔑 Created pending tx ${transaction._id} for user ${userId}`);
+
+    // Now initiate STK
     console.log('🔑 Initiating STK Push with phone:', normalizedPhone, 'amount:', amount);
     const stkResponse = await initiateSTKPush(
       normalizedPhone,
@@ -27,21 +42,11 @@ export const initiatePayment = async (req, res) => {
       transactionDesc
     );
 
-    // Now create transaction with queued profile data (no profile save yet)
-    const transaction = await Transaction.create({
-      user: userId,
-      checkoutRequestID: stkResponse.CheckoutRequestID,
-      amount,
-      phone: normalizedPhone,
-      accountReference: accountRef,
-      transactionDesc,
-      accountType,
-      duration,
-      status: 'PENDING',  // Explicitly set initial status
-      queuedProfileData: profileData,  // Queue full profile payload (use schema's Mixed field)
-    });
+    // Update tx with CheckoutRequestID
+    transaction.checkoutRequestID = stkResponse.CheckoutRequestID;
+    await transaction.save();
 
-    console.log(`💳 STK initiated: ${stkResponse.CheckoutRequestID} for user ${userId} (profile queued)`);
+    console.log(`💳 STK initiated: ${stkResponse.CheckoutRequestID} for tx ${transaction._id} (profile queued)`);
     res.json({
       success: true,
       message: 'STK Push initiated. Check your phone.',
@@ -54,11 +59,11 @@ export const initiatePayment = async (req, res) => {
   }
 };
 
-// Handle M-Pesa Callback (POST /api/payments/callback)
+// Handle M-Pesa Callback
 export const handleCallback = async (req, res) => {
   try {
     console.log('📨 M-Pesa Callback received:', JSON.stringify(req.body, null, 2));
-    const { Body } = req.body;  // M-Pesa callback format: { Body: { stkCallback: { ... } } }
+    const { Body } = req.body;
     const callback = Body.stkCallback || {};
     const { CheckoutRequestID, ResultCode, ResultDesc } = callback;
 
@@ -67,47 +72,45 @@ export const handleCallback = async (req, res) => {
       return res.status(200).json({ ResultCode: 1, ResultDesc: 'Invalid callback' });
     }
 
-    // Find transaction
+    console.log(`🔍 Searching tx for CheckoutRequestID: ${CheckoutRequestID}`);
+
     const transaction = await Transaction.findOne({ checkoutRequestID: CheckoutRequestID });
     if (!transaction) {
-      console.warn('⚠️ Transaction not found for CheckoutRequestID:', CheckoutRequestID);
-      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });  // Ack anyway
+      console.warn(`⚠️ Transaction not found for CheckoutRequestID: ${CheckoutRequestID}`);
+      // ✅ FIX: Log recent tx for debug
+      const recentTx = await Transaction.find({}).sort({ createdAt: -1 }).limit(5).select('checkoutRequestID status createdAt');
+      console.log('Recent tx IDs:', recentTx.map(t => ({ id: t.checkoutRequestID, status: t.status, created: t.createdAt })));
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    // Idempotency: Skip if already processed (prevents duplicate updates from retry callbacks)
     if (transaction.status !== 'PENDING') {
       return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    // Update transaction
     transaction.status = ResultCode === 0 ? 'SUCCESS' : 'FAILED';
     transaction.resultCode = ResultCode;
     transaction.resultDesc = ResultDesc;
 
     if (ResultCode === 0) {
-      // Extract receipt from metadata if success
       if (callback.CallbackMetadata?.Item) {
         const receiptItem = callback.CallbackMetadata.Item.find(item => item.Name === 'MpesaReceiptNumber');
         if (receiptItem) transaction.mpesaReceiptNumber = receiptItem.Value;
       }
 
-      // ✅ NEW: Add full amount to user balance on success
       const user = await User.findById(transaction.user);
       if (user) {
-        user.balance += transaction.amount;  // Add the full paid amount to balance
+        user.balance += transaction.amount;
         await user.save();
         console.log(`💰 Added ${transaction.amount} Ksh to balance for user ${user.username || user._id} (new balance: ${user.balance})`);
       }
 
-      // Success: Finalize profile update (only now!)
       const queuedProfile = transaction.queuedProfileData;
       if (queuedProfile) {
         const userId = new mongoose.Types.ObjectId(transaction.user);
         const profileData = {
           ...queuedProfile,
-          user: userId,  // Add user back for upsert
-          active: true,  // ✅ Ensure active on upgrade (reactivates expired profiles)
-          // ✅ Trial flip & expiry already queued; ensure set (for paid upgrade)
+          user: userId,
+          active: true,
           isTrial: false,
           expiryDate: new Date(Date.now() + transaction.duration * 24 * 60 * 60 * 1000),
         };
@@ -124,7 +127,6 @@ export const handleCallback = async (req, res) => {
           'expires:', profile.expiryDate,
           'with photos:', profile.photos?.length || 0
         );
-        // Clear queued data
         transaction.queuedProfileData = undefined;
       }
     } else {
@@ -134,30 +136,27 @@ export const handleCallback = async (req, res) => {
     await transaction.save();
     console.log(`💾 Saved tx ${CheckoutRequestID} with final status: ${transaction.status}`);
 
-    // Always respond 200 OK to M-Pesa to acknowledge (prevents retries)
     res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (error) {
     console.error('Callback error:', error);
-    res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });  // Ack even on error
+    res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   }
 };
 
-// Optional: Validate transaction (if using validation URL)
+// handleValidation
 export const handleValidation = async (req, res) => {
   console.log('🔍 M-Pesa Validation received:', JSON.stringify(req.body, null, 2));
-  // For STK Push, validation is often skipped; just ack
   res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
 };
 
-// Get user transactions (GET /api/payments/my-transactions)
+// getMyTransactions
 export const getMyTransactions = async (req, res) => {
   try {
-    const userId = new mongoose.Types.ObjectId(req.user._id);  // Ensure ObjectId
+    const userId = new mongoose.Types.ObjectId(req.user._id);
     const transactions = await Transaction.find({ user: userId })
       .sort({ createdAt: -1 })
       .populate('user', 'username');
     
-    // Debug log: What we're returning
     console.log('📊 Returning transactions for user', userId, 
       transactions.map(t => ({ 
         checkoutRequestID: t.checkoutRequestID, 
@@ -174,7 +173,7 @@ export const getMyTransactions = async (req, res) => {
   }
 };
 
-// New: Get single transaction status by CheckoutRequestID (GET /api/payments/transaction-status?checkoutRequestID=...)
+// getTransactionStatus
 export const getTransactionStatus = async (req, res) => {
   try {
     const { checkoutRequestID } = req.query;
@@ -196,7 +195,8 @@ export const getTransactionStatus = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-// New: Initiate prorate payment for upgrade (GET /api/users/payments/prorate-upgrade?userId=...&amount=...&newType=...)
+
+// initiateProratePayment
 export const initiateProratePayment = async (req, res) => {
   try {
     const { userId, amount, newType } = req.query;
@@ -209,7 +209,6 @@ export const initiateProratePayment = async (req, res) => {
       return res.status(400).json({ error: 'Invalid amount' });
     }
 
-    // Fetch user and profile for validation
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -220,17 +219,13 @@ export const initiateProratePayment = async (req, res) => {
       return res.status(400).json({ error: 'Invalid upgrade: No active profile or already upgraded' });
     }
 
-    // Normalize phone from profile
     const phone = profile.personal.phone.startsWith('254') ? profile.personal.phone : `254${profile.personal.phone.slice(1)}`;
 
-    // Ref for prorate txn
     const ref = `Prorate-${newType}-${String(userId).slice(-6)}`;
     const desc = `Proration for ${newType} upgrade (${parsedAmount} Ksh)`;
 
-    // Initiate STK Push
     const stkResponse = await initiateSTKPush(phone, parsedAmount, ref, desc);
 
-    // Create prorate txn (no queued data needed; cron or manual update on success)
     const transaction = await Transaction.create({
       user: userId,
       checkoutRequestID: stkResponse.CheckoutRequestID,
@@ -239,9 +234,8 @@ export const initiateProratePayment = async (req, res) => {
       accountReference: ref,
       transactionDesc: desc,
       accountType: newType,
-      duration: profile.accountType.duration, // Reuse old duration for calc
+      duration: profile.accountType.duration,
       status: 'PENDING',
-      // Optional: Link to original upgrade txn if needed
     });
 
     console.log(`💳 Prorate STK initiated: ${stkResponse.CheckoutRequestID} for ${newType} (user ${userId}, amount ${parsedAmount})`);
