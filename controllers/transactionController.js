@@ -18,7 +18,7 @@ export const initiatePayment = async (req, res) => {
     const accountRef = `Account-${accountType}-${Date.now()}`;
     const transactionDesc = `Payment for ${accountType} (${duration} days)`;
 
-    // ✅ FIX: Create tx FIRST (pending) to avoid race in callback
+    // ✅ FIX: Create tx FIRST (pending, no CheckoutID yet)
     const transaction = await Transaction.create({
       user: userId,
       amount,
@@ -33,8 +33,7 @@ export const initiatePayment = async (req, res) => {
 
     console.log(`🔑 Created pending tx ${transaction._id} for user ${userId}`);
 
-    // Now initiate STK
-    console.log('🔑 Initiating STK Push with phone:', normalizedPhone, 'amount:', amount);
+    // Now STK (update tx after)
     const stkResponse = await initiateSTKPush(
       normalizedPhone,
       amount,
@@ -42,11 +41,10 @@ export const initiatePayment = async (req, res) => {
       transactionDesc
     );
 
-    // Update tx with CheckoutRequestID
     transaction.checkoutRequestID = stkResponse.CheckoutRequestID;
     await transaction.save();
 
-    console.log(`💳 STK initiated: ${stkResponse.CheckoutRequestID} for tx ${transaction._id} (profile queued)`);
+    console.log(`💳 STK initiated: ${stkResponse.CheckoutRequestID} for tx ${transaction._id}`);
     res.json({
       success: true,
       message: 'STK Push initiated. Check your phone.',
