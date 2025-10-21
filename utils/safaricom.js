@@ -1,45 +1,87 @@
 import axios from 'axios';
 import crypto from 'crypto';  
 import dotenv from 'dotenv';
+import fs from 'fs';  // For file logging (optional, for VPS persistence)
 dotenv.config();
 
-// Generate M-Pesa timestamp (YYYYMMDDHHmmss) in UTC
+// Helper to log to console + file (for debugging on VPS)
+const logMpesa = (message, data = null) => {
+  const logMsg = `${new Date().toISOString()} - ${message}${data ? `\n${JSON.stringify(data, null, 2)}` : ''}`;
+  console.log(logMsg);
+  // Optional: Write to file for PM2 logs
+  try {
+    fs.appendFileSync('./mpesa-logs.txt', logMsg + '\n\n');
+  } catch (err) {
+    // Ignore file write errors
+  }
+};
+
+// Generate M-Pesa timestamp (YYYYMMDDHHmmss) in EAT (Africa/Nairobi - UTC+3)
 export const getTimestamp = () => {
-  const now = new Date().toISOString();  // Ensures UTC time
+  const now = new Date().toLocaleString("sv", { timeZone: "Africa/Nairobi" });  // EAT format
   const year = now.slice(0, 4);
   const month = now.slice(5, 7);
   const day = now.slice(8, 10);
   const hour = now.slice(11, 13);
   const minute = now.slice(14, 16);
   const second = now.slice(17, 19);
-  return `${year}${month}${day}${hour}${minute}${second}`;
+  const timestamp = `${year}${month}${day}${hour}${minute}${second}`;
+  logMpesa(`Generated EAT timestamp: ${timestamp}`);
+  return timestamp;
 };
 
 // Generate Lipa na M-Pesa password (Base64 of Shortcode + Passkey + Timestamp)
 export const generatePassword = (shortcode, passkey, timestamp) => {
   const plain = `${shortcode}${passkey}${timestamp}`;
-  return Buffer.from(plain).toString('base64');
+  const password = Buffer.from(plain).toString('base64');
+  logMpesa(`Generated password (first 50 chars): ${password.substring(0, 50)}...`);
+  return password;
 };
 
-// Get OAuth access token
+// Get OAuth access token - Enhanced with logging
 export const getAccessToken = async () => {
   const consumerKey = process.env.MPESA_CONSUMER_KEY;
   const consumerSecret = process.env.MPESA_CONSUMER_SECRET;
+  if (!consumerKey || !consumerSecret) {
+    const err = new Error('Missing MPESA_CONSUMER_KEY or MPESA_CONSUMER_SECRET in .env');
+    logMpesa('Token error: Missing env vars');
+    throw err;
+  }
+
   const auth = Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
   const url = 'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials';  
 
+  logMpesa('Starting token generation...');
+
   try {
-    const { data } = await axios.get(url, {
+    const { data, status } = await axios.get(url, {
       headers: { Authorization: `Basic ${auth}` },
     });
-    return data.access_token;
+
+    logMpesa(`Token request successful (status: ${status})`, data);
+
+    const token = data.access_token;
+    if (!token || token === 'null') {
+      const err = new Error('No access_token in response');
+      logMpesa('Token error: No token in response', data);
+      throw err;
+    }
+
+    const expiry = new Date(Date.now() + (data.expires_in || 3600) * 1000).toISOString();
+    logMpesa(`Valid token generated (expires: ${expiry}). Preview: ${token.substring(0, 30)}...`);
+
+    return token;
   } catch (error) {
-    throw new Error(`Token generation failed: ${error.response?.data?.errorMessage || error.message}`);
+    const errMsg = `Token generation failed: ${error.response?.status} - ${error.response?.data?.errorMessage || error.message}`;
+    logMpesa(errMsg, error.response?.data);
+    throw new Error(errMsg);
   }
 };
 
-// Initiate STK Push (Lipa na M-Pesa Online)
+// Initiate STK Push (Lipa na M-Pesa Online) - Enhanced logging
 export const initiateSTKPush = async (phone, amount, accountRef, transactionDesc, shortcode = process.env.MPESA_SHORTCODE) => {
+  logMpesa(`STK Push params: phone=${phone}, amount=${amount}, ref=${accountRef}, desc=${transactionDesc}, shortcode=${shortcode}`);
+
   const timestamp = getTimestamp();
   const password = generatePassword(shortcode, process.env.MPESA_PASSKEY, timestamp);
   const token = await getAccessToken();
@@ -58,13 +100,27 @@ export const initiateSTKPush = async (phone, amount, accountRef, transactionDesc
     TransactionDesc: transactionDesc || 'Account Type Upgrade',
   };
 
+  logMpesa('Full STK payload being sent:', payload);
+
   const url = 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest'; 
   try {
-    const { data } = await axios.post(url, payload, {
-      headers: { Authorization: `Bearer ${token}` },
+    const { data, status } = await axios.post(url, payload, {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
     });
+
+    logMpesa(`STK Push response (status: ${status})`, data);
+
+    if (data.ResponseCode !== '0') {
+      logMpesa(`STK Warning: Non-zero ResponseCode ${data.ResponseCode}: ${data.ResponseDescription}`);
+    }
+
     return data;  
   } catch (error) {
-    throw new Error(`STK Push failed: ${error.response?.data?.errorMessage || error.message}`);
+    const errMsg = `STK Push failed: ${error.response?.status} - ${error.response?.data?.errorMessage || error.message}`;
+    logMpesa(errMsg, error.response?.data);
+    throw new Error(errMsg);
   }
 };
