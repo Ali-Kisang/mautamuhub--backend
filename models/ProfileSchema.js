@@ -86,8 +86,6 @@ const profileSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// ✅ FIX: Add indexes for fast queries
 profileSchema.index({ expiryDate: 1, active: 1 });
-profileSchema.index({ user: 1 });
 
 export default mongoose.model("Profile", profileSchema);
