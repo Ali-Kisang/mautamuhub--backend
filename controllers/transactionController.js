@@ -3,22 +3,21 @@ import { initiateSTKPush } from '../utils/safaricom.js';
 import Profile from '../models/ProfileSchema.js';  
 import User from '../models/User.js'; 
 import mongoose from 'mongoose';  
-
+import { mpesaErrorMessages } from '../utils/mpesaCodes.js';
 export const initiatePayment = async (req, res) => {
   try {
-    const { amount, phone, accountType, duration, profileData } = req.body;  
-    const userId = req.user._id;  
+    const { amount, phone, accountType, duration, profileData } = req.body;
+    const userId = req.user._id;
 
     if (amount <= 0) {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
 
     const normalizedPhone = phone.startsWith('254') ? phone : `254${phone.slice(1)}`;
-
     const accountRef = `Account-${accountType}-${Date.now()}`;
     const transactionDesc = `Payment for ${accountType} (${duration} days)`;
 
-    // ✅ FIX: Create tx FIRST (pending, no CheckoutID yet)
+    // Step 1: Create pending transaction
     const transaction = await Transaction.create({
       user: userId,
       amount,
@@ -33,7 +32,7 @@ export const initiatePayment = async (req, res) => {
 
     console.log(`🔑 Created pending tx ${transaction._id} for user ${userId}`);
 
-    // Now STK (update tx after)
+    // Step 2: Trigger STK Push
     const stkResponse = await initiateSTKPush(
       normalizedPhone,
       amount,
@@ -45,6 +44,7 @@ export const initiatePayment = async (req, res) => {
     await transaction.save();
 
     console.log(`💳 STK initiated: ${stkResponse.CheckoutRequestID} for tx ${transaction._id}`);
+
     res.json({
       success: true,
       message: 'STK Push initiated. Check your phone.',
@@ -53,11 +53,12 @@ export const initiatePayment = async (req, res) => {
     });
   } catch (error) {
     console.error('Payment initiation error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Payment initiation failed. Please try again later.' });
   }
 };
 
-// Handle M-Pesa Callback
+
+// Handle M-Pesa Callback (with auto-retry support)
 export const handleCallback = async (req, res) => {
   try {
     console.log('📨 M-Pesa Callback received:', JSON.stringify(req.body, null, 2));
@@ -70,43 +71,41 @@ export const handleCallback = async (req, res) => {
       return res.status(200).json({ ResultCode: 1, ResultDesc: 'Invalid callback' });
     }
 
-    console.log(`🔍 Searching tx for CheckoutRequestID: ${CheckoutRequestID}`);
-
     const transaction = await Transaction.findOne({ checkoutRequestID: CheckoutRequestID });
     if (!transaction) {
       console.warn(`⚠️ Transaction not found for CheckoutRequestID: ${CheckoutRequestID}`);
-      // ✅ FIX: Log recent tx for debug
-      const recentTx = await Transaction.find({}).sort({ createdAt: -1 }).limit(5).select('checkoutRequestID status createdAt');
-      console.log('Recent tx IDs:', recentTx.map(t => ({ id: t.checkoutRequestID, status: t.status, created: t.createdAt })));
       return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    if (transaction.status !== 'PENDING') {
-      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    // Skip if already completed
+    if (['SUCCESS', 'FAILED', 'CANCELLED'].includes(transaction.status)) {
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Already processed' });
     }
 
-    transaction.status = ResultCode === 0 ? 'SUCCESS' : 'FAILED';
-    transaction.resultCode = ResultCode;
-    transaction.resultDesc = ResultDesc;
-
+    // --- ✅ Handle Success ---
     if (ResultCode === 0) {
+      transaction.status = 'SUCCESS';
+      transaction.resultCode = ResultCode;
+      transaction.resultDesc = ResultDesc;
+
+      // Capture MpesaReceiptNumber
       if (callback.CallbackMetadata?.Item) {
-        const receiptItem = callback.CallbackMetadata.Item.find(item => item.Name === 'MpesaReceiptNumber');
+        const receiptItem = callback.CallbackMetadata.Item.find(i => i.Name === 'MpesaReceiptNumber');
         if (receiptItem) transaction.mpesaReceiptNumber = receiptItem.Value;
       }
 
+      // ✅ Update user balance & profile
       const user = await User.findById(transaction.user);
       if (user) {
-        user.balance += transaction.amount;
+        user.balance = (user.balance || 0) + transaction.amount;
         await user.save();
-        console.log(`💰 Added ${transaction.amount} Ksh to balance for user ${user.username || user._id} (new balance: ${user.balance})`);
+        console.log(`💰 Balance updated for ${user.username || user._id}`);
       }
 
-      const queuedProfile = transaction.queuedProfileData;
-      if (queuedProfile) {
+      if (transaction.queuedProfileData) {
         const userId = new mongoose.Types.ObjectId(transaction.user);
         const profileData = {
-          ...queuedProfile,
+          ...transaction.queuedProfileData,
           user: userId,
           active: true,
           isTrial: false,
@@ -117,29 +116,74 @@ export const handleCallback = async (req, res) => {
           { user: userId },
           { $set: profileData },
           { new: true, upsert: true, runValidators: true }
-        ).populate('user', 'email username avatar');
-
-        console.log('✅ Profile finalized after payment:', profile._id, 
-          'active:', profile.active, 
-          'isTrial:', profile.isTrial, 
-          'expires:', profile.expiryDate,
-          'with photos:', profile.photos?.length || 0
         );
+
+        console.log(`✅ Profile finalized for ${user.username || user._id}`, profile._id);
         transaction.queuedProfileData = undefined;
       }
-    } else {
-      console.log('❌ Payment failed:', ResultDesc);
+
+      await transaction.save();
+      console.log(`💾 Tx ${CheckoutRequestID} marked SUCCESS`);
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
     }
 
-    await transaction.save();
-    console.log(`💾 Saved tx ${CheckoutRequestID} with final status: ${transaction.status}`);
+    // --- ⚠️ Handle temporary failure (ResultCode 2029) ---
+    if (ResultCode === 2029) {
+      const MAX_RETRIES = 2;
+      const RETRY_DELAY_MS = 15000; // 15 seconds
 
+      transaction.resultCode = ResultCode;
+      transaction.resultDesc = ResultDesc;
+      transaction.retryCount = (transaction.retryCount || 0) + 1;
+      transaction.lastRetryAt = new Date();
+
+      if (transaction.retryCount <= MAX_RETRIES) {
+        transaction.status = 'RETRYING';
+        await transaction.save();
+
+        console.log(`🔁 Temporary failure (2029). Retrying in ${RETRY_DELAY_MS / 1000}s (Attempt ${transaction.retryCount}/${MAX_RETRIES})`);
+
+        setTimeout(async () => {
+          try {
+            const retryResponse = await initiateSTKPush(
+              transaction.phone,
+              transaction.amount,
+              transaction.accountReference,
+              transaction.transactionDesc
+            );
+
+            transaction.checkoutRequestID = retryResponse.CheckoutRequestID;
+            transaction.status = 'PENDING';
+            await transaction.save();
+
+            console.log(`💳 Retried STK initiated: ${retryResponse.CheckoutRequestID} for tx ${transaction._id}`);
+          } catch (retryError) {
+            console.error('Retry STK Push failed:', retryError.message);
+          }
+        }, RETRY_DELAY_MS);
+      } else {
+        transaction.status = 'FAILED';
+        await transaction.save();
+        console.log(`❌ Max retries reached for tx ${transaction._id}. Marked FAILED.`);
+      }
+
+      return res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    }
+
+    // --- ❌ Permanent failure ---
+    transaction.status = 'FAILED';
+    transaction.resultCode = ResultCode;
+    transaction.resultDesc = mpesaErrorMessages[ResultCode] || ResultDesc;
+    await transaction.save();
+
+    console.log(`❌ Payment failed (${ResultCode}): ${ResultDesc}`);
     res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   } catch (error) {
     console.error('Callback error:', error);
     res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
   }
 };
+
 
 // handleValidation
 export const handleValidation = async (req, res) => {
