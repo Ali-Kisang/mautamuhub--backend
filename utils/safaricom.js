@@ -78,8 +78,8 @@ export const getAccessToken = async () => {
 };
 
 // Initiate STK Push
-export const initiateSTKPush = async (phone, amount, accountRef, transactionDesc, shortcode = process.env.MPESA_SHORTCODE) => {
-  logMpesa(`STK Push params: phone=${phone}, amount=${amount}, ref=${accountRef}, desc=${transactionDesc}, shortcode=${shortcode}`);
+export const initiateSTKPush = async (phone, amount, accountRef, transactionDesc, shortcode = process.env.MPESA_SHORTCODE, tillNumber = process.env.MPESA_TILL_NUMBER || '5680394') => {
+  logMpesa(`STK Push params: phone=${phone}, amount=${amount}, ref=${accountRef}, desc=${transactionDesc}, shortcode=${shortcode}, tillNumber=${tillNumber}`);
 
   const timestamp = getTimestamp();
   const password = generatePassword(shortcode, process.env.MPESA_PASSKEY, timestamp);
@@ -89,10 +89,10 @@ export const initiateSTKPush = async (phone, amount, accountRef, transactionDesc
     BusinessShortCode: shortcode,
     Password: password,
     Timestamp: timestamp,
-    TransactionType: 'CustomerPayBillOnline',
+    TransactionType: 'CustomerBuyGoodsOnline',  // ✅ UPDATED: As per Safaricom email
     Amount: amount,
     PartyA: phone,  
-    PartyB: shortcode,
+    PartyB: tillNumber,  // ✅ UPDATED: Till Number (5680394) instead of shortcode
     PhoneNumber: phone,
     CallBackURL: process.env.MPESA_CALLBACK_URL,
     AccountReference: accountRef || 'Onboarding Payment',
