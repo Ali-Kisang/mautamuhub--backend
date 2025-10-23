@@ -2,10 +2,13 @@ import Profile from "../models/ProfileSchema.js";
 import User from "../models/User.js"; // Import User model if needed for validation
 import Transaction from "../models/Transaction.js"; // Add import for Transaction model
 import fs from "fs";
+import multer from 'multer';
 import { uploadEscortPhotos, deleteEscortPhoto } from "../utils/cloudinary.js";
 import mongoose from "mongoose";
 import qs from "qs";
 import { initiateSTKPush } from "../utils/safaricom.js"; // Add import for STK Push helper
+
+
 
 export const createOrUpdateProfile = async (req, res) => {
   try {
@@ -14,7 +17,7 @@ export const createOrUpdateProfile = async (req, res) => {
       ? new mongoose.Types.ObjectId(req.user._id) 
       : req.user._id;
 
-    // Parse nested FormData (handles personal[username], etc.)
+    // ... (keep all your existing parsing code: qs.parse, flattenString, services, etc.)
     const parsed = qs.parse(req.body, { comma: true });  // comma: true for arrays like services[selected]
 
     const personal = parsed.personal || {};
@@ -72,8 +75,17 @@ export const createOrUpdateProfile = async (req, res) => {
       photos = [...new Set([...photos, ...existing])];  // Merge and dedupe
     }
 
-    // Handle new photo uploads (multer attaches them; only Files from frontend)
+    // ✅ NEW: Handle Multer file size errors (catches oversized photos early)
     if (req.files && req.files.length > 0) {
+      // Check for MulterError from size limit (though it should be caught by middleware, this is a safety net)
+      if (req.files.some(file => file.size > 10 * 1024 * 1024)) {
+        return res.status(413).json({
+          message: 'Photo too large',
+          error: 'One or more photos exceed 10MB. Please resize and try again.',
+          limit: '10MB per photo'
+        });
+      }
+
       const newPublicIds = [];
       for (const file of req.files) {
         try {
@@ -89,7 +101,7 @@ export const createOrUpdateProfile = async (req, res) => {
       photos = [...photos, ...newPublicIds];
     }
 
-    // ✅ Photo limit validation (based on accountType)
+    // ✅ Photo limit validation (based on accountType) – this is number, not size
     const photoLimit = (() => {
       switch (accountType.type) {
         case "Spa": return 10;
@@ -106,6 +118,7 @@ export const createOrUpdateProfile = async (req, res) => {
       return res.status(400).json({ message: "At least one photo is required" });
     }
 
+    // ... (keep all your existing logic: trial check, payment initiation, profile upsert, etc.)
     // ✅ NEW: Check if this is first-time (give trial) or upgrade (payment)
     const hasSuccessfulPayment = await Transaction.exists({
       user: userId,
@@ -183,8 +196,6 @@ export const createOrUpdateProfile = async (req, res) => {
           expiryDate: new Date(Date.now() + accountType.duration * 24 * 60 * 60 * 1000),
         },
       });
-
-      console.log(`💳 Payment initiated for upgrade (user ${userId}): CheckoutRequestID ${stkResponse.CheckoutRequestID}`);
       return res.json({
         requiresPayment: true,
         message: 'Payment initiated for upgrade. Check your phone for M-Pesa PIN prompt.',
@@ -214,9 +225,24 @@ export const createOrUpdateProfile = async (req, res) => {
       { new: true, upsert: true, runValidators: true }
     ).populate("user", "email username avatar");
 
-    console.log('💾 Profile updated (no payment) with photos:', photos.length, 'for user:', userId);
     res.json({ message: "Profile updated successfully", profile });
+
   } catch (err) {
+    // ✅ Enhanced error handling: Catch Multer size errors specifically
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          message: 'Photo too large',
+          error: 'One or more photos exceed 10MB. Please resize (e.g., use an online compressor) and try again.',
+          limit: '10MB per photo',
+          tip: 'Recommended: Keep photos under 2MB for faster uploads.'
+        });
+      }
+      // Other Multer errors (e.g., file type)
+      return res.status(400).json({ message: err.message });
+    }
+
+    // Handle other errors (e.g., uploadEscortPhotos failure, DB issues)
     console.error("❌ Profile update error:", err);
     res.status(500).json({ message: err.message || "Failed to save profile" });
   }
