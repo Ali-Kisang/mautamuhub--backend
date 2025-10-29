@@ -49,7 +49,7 @@ export const scheduleTrialExpiry = () => {
 // sendExpiryNotification (unchanged, but ensure nodemailer dynamic import)
 const sendExpiryNotification = async (profile) => {
   const { default: nodemailer } = await import('nodemailer');  
-  const transporter = nodemailer.createTransporter({
+  const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT),
     secure: process.env.SMTP_PORT === '465', 
