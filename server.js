@@ -29,9 +29,14 @@ const app = express();
 app.use(
   cors({
     origin: ["https://mautamuhub.com", "https://www.mautamuhub.com", "http://localhost:5173"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
+
+
+app.options("*", cors());
 
 app.use(express.static(path.join(__dirname, "static")));
 app.use(express.json({ limit: '10mb' })); 

@@ -185,7 +185,7 @@ export const checkUserProfile = async (req, res) => {
       avatar: user.avatar || null 
     });
   } catch (error) {
-    console.error("Check profile error:", error);
+  
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -199,14 +199,6 @@ export const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: 'Valid email is required.' });
     }
 
-    // Log env vars for debugging (remove in production)
-    console.log('Loaded SMTP creds:', {
-      host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT,
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS ? '***LOADED***' : 'MISSING',
-      baseUrl: process.env.BASE_URL
-    });
 
     // Find user
     const user = await User.findOne({ email });
