@@ -38,3 +38,6 @@ pids/
 
 # Coverage (for tests)
 coverage/
+mpesa-logs.txt
+static/
+uploads/
