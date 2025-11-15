@@ -46,10 +46,10 @@ export const scheduleTrialExpiry = () => {
   }, { timezone: 'Africa/Nairobi' });
 };
 
-// sendExpiryNotification (unchanged, but ensure nodemailer dynamic import)
+// sendExpiryNotification (updated default duration to 30 days for trials)
 const sendExpiryNotification = async (profile) => {
   const { default: nodemailer } = await import('nodemailer');  
-  const transporter = nodemailer.createTransport({
+  const transporter = nodemailer.createTransporter({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT),
     secure: process.env.SMTP_PORT === '465', 
@@ -76,7 +76,7 @@ const sendExpiryNotification = async (profile) => {
         <p style="color: #555; line-height: 1.6; margin-bottom: 25px;">Your ${type} ${trialText} has expired. You've been unlisted from the directory. Reactivate to regain visibility and features!</p>
         <ul style="color: #666; text-align: left; max-width: 400px; margin: 0 auto 25px;">
           <li>Priority listing and enhanced visibility.</li>
-          <li>${type} plan: Ksh ${accountType?.amount || 0} for ${accountType?.duration || 7} days.</li>
+          <li>${type} plan: Ksh ${accountType?.amount || 0} for ${accountType?.duration || 30} days.</li>
           <li>Quick reactivation in under 2 minutes.</li>
         </ul>
         <a href="${upgradeLink}" style="background: linear-gradient(135deg, #FFC0CB, #FF99CC); color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; display: inline-block; margin: 20px auto; font-weight: bold; box-shadow: 0 4px 8px rgba(255, 192, 203, 0.3); transition: transform 0.2s ease;">Reactivate Now</a>
@@ -98,7 +98,7 @@ const sendUpgradePromptEmail = async (user, upgradeDetails) => {
   // ... (your existing code - no changes needed)
 };
 
-// Upgrade Proration Cron
+// Upgrade Proration Cron (updated to handle trials with 30-day assumption, fixed proration logic, expiry calculation, and typos)
 export const scheduleUpgradeProration = () => {
   cron.schedule('*/15 * * * *', async () => {
     console.log('🕐 Running upgrade proration check...');
@@ -121,30 +121,73 @@ export const scheduleUpgradeProration = () => {
         const { user, accountType: newType, duration: newDuration, amount: paidAmount } = txn;
         const userId = user._id;
         const oldProfile = await Profile.findOne({ user: userId }).lean();
-        if (!oldProfile || oldProfile.accountType.type === newType || !oldProfile.active) {
+        // For new subscriptions (no old profile or inactive), set profile immediately
+        if (!oldProfile || !oldProfile.active) {
+          const now = new Date();
+          const newExpiry = new Date(now.getTime() + (newDuration * 24 * 60 * 60 * 1000));
+          await Profile.findOneAndUpdate(
+            { user: userId },
+            {
+              $set: {
+                'accountType.type': newType,
+                'accountType.amount': paidAmount,
+                'accountType.duration': newDuration,
+                active: true,
+                isTrial: false,
+                expiryDate: newExpiry,
+              },
+            },
+            { upsert: true }
+          );
           await Transaction.findByIdAndUpdate(txn._id, { $set: { processed: true } });
           continue;
         }
-        const oldType = oldProfile.accountType.type;
+        // Skip if same type (renewal logic can be added here if needed)
+        if (oldProfile.accountType?.type === newType) {
+          // For renewal, extend expiry
+          const now = new Date();
+          const newExpiry = new Date(oldProfile.expiryDate.getTime() + (newDuration * 24 * 60 * 60 * 1000));
+          await Profile.findOneAndUpdate(
+            { user: userId },
+            {
+              $set: {
+                'accountType.type': newType,
+                'accountType.amount': paidAmount,
+                'accountType.duration': newDuration,
+                active: true,
+                isTrial: false,
+                expiryDate: newExpiry,
+              },
+            }
+          );
+          await Transaction.findByIdAndUpdate(txn._id, { $set: { processed: true } });
+          continue;
+        }
+        // Upgrade logic
+        const oldType = oldProfile.accountType?.type || (oldProfile.isTrial ? 'Trial' : 'Unknown');
         const now = new Date();
         const oldExpiry = oldProfile.expiryDate;
         let remainingDays = 0;
         if (oldExpiry && oldExpiry > now) {
           remainingDays = Math.ceil((oldExpiry.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
         }
-        const oldDailyRate = oldProfile.accountType.amount / oldProfile.accountType.duration;
-        const newDailyRate = (paidAmount / newDuration);
+        let oldDailyRate = 0;
+        if (!oldProfile.isTrial && oldProfile.accountType) {
+          oldDailyRate = oldProfile.accountType.amount / oldProfile.accountType.duration;
+        } // For trials, oldDailyRate = 0 (free)
+        const newDailyRate = paidAmount / newDuration;
         const dailyDiff = newDailyRate - oldDailyRate;
         const proratedAdditional = remainingDays * dailyDiff;
-        let neededAmount = proratedAdditional;
         let status = 'prompt';
+        let neededAmount = Math.max(0, proratedAdditional - (user.balance || 0));
         if (user.balance >= proratedAdditional) {
+          // Deduct the additional proration amount (assuming full paidAmount was already deducted on txn success)
           await User.findByIdAndUpdate(userId, { 
-            $inc: { balance: -proratedAdditional + paidAmount } 
+            $inc: { balance: -proratedAdditional } 
           });
-          const newExpiry = oldExpiry && remainingDays > 0 
-            ? new Date(oldExpiry.getTime() + (newDuration * 24 * 60 * 60 * 1000))
-            : new Date(now.getTime() + (newDuration * 24 * 60 * 60 * 1000));
+          // Set new expiry: credit remaining days + full new duration
+          const totalDays = remainingDays + newDuration;
+          const newExpiry = new Date(now.getTime() + (totalDays * 24 * 60 * 60 * 1000));
           await Profile.findOneAndUpdate(
             { user: userId },
             {
@@ -161,12 +204,11 @@ export const scheduleUpgradeProration = () => {
           status = 'processed';
           neededAmount = 0;
         } else {
-          neededAmount = Math.max(0, proratedAdditional - (user.balance || 0));
           await sendUpgradePromptEmail(user, {
             oldType,
             newType,
             remainingDays,
-            proratedAmount,
+            proratedAdditional,  // ✅ FIX: Typo was 'proratedAmount'
             neededAmount,
           });
         }

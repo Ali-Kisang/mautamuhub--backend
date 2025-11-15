@@ -5,7 +5,6 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 
-
 export const updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -91,7 +90,7 @@ export const getUsers = async (req, res) => {
   res.json(users);
 };
 
-// Get another user's profile by ID
+// Get another user's profile by ID (updated to include statusBadge for trials)
 export const getUserProfile = async (req, res) => {
   try {
     const { id } = req.params; 
@@ -111,7 +110,14 @@ export const getUserProfile = async (req, res) => {
       }
       userData = user;
     } else {
-      userData = profile.user;
+      // Enrich profile with statusBadge (handles trials)
+      const enrichedProfile = {
+        ...profile.toObject(),
+        statusBadge: profile.isTrial ? 'Trial' : `${profile.accountType?.type || 'Regular'} Active`
+      };
+      userData = enrichedProfile.user;
+      res.json({ user: userData, profile: enrichedProfile });  // Include full enriched profile
+      return;  // Early return since we have profile
     }
 
     res.json({ user: userData });
@@ -140,6 +146,51 @@ export const getProfileById = async (req, res) => {
   } catch (error) {
     console.error("Error fetching profile by ID:", error);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// NEW: Get all active profiles for directory (includes paid + trials)
+export const getAllProfiles = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, search = '' } = req.query;  // Optional pagination & search
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Query: Active paid OR active trials
+    const query = {
+      active: true,
+      $or: [
+        { 'accountType.type': { $in: ['VIP', 'VVIP', 'Spa'] } },  // Paid types (adjust enum if needed)
+        { isTrial: true }  // Trials
+      ]
+    };
+
+    // Optional search (e.g., by username)
+    if (search) {
+      query['user.username'] = { $regex: search, $options: 'i' };
+    }
+
+    const profiles = await Profile.find(query)
+      .populate('user', 'username email phone bio avatar')  // Populate user fields
+      .sort({ expiryDate: -1 })  // Fresh trials first
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    // Enrich with badges
+    const enrichedProfiles = profiles.map(profile => ({
+      ...profile.toObject(),
+      statusBadge: profile.isTrial ? 'Trial' : `${profile.accountType.type || 'Regular'} Active`
+    }));
+
+    // Total count for pagination
+    const total = await Profile.countDocuments(query);
+
+    res.json({
+      profiles: enrichedProfiles,
+      pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / limit) }
+    });
+  } catch (error) {
+    console.error('Get all profiles error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 };
 
@@ -277,6 +328,7 @@ export const forgotPassword = async (req, res) => {
     res.status(500).json({ message: 'Server error. Please try again later.' });
   }
 };
+
 export const resetPassword = async (req, res) => {
   try {
     

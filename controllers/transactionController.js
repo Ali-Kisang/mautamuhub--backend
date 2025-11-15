@@ -4,16 +4,38 @@ import Profile from '../models/ProfileSchema.js';
 import User from '../models/User.js'; 
 import mongoose from 'mongoose';  
 import { mpesaErrorMessages } from '../utils/mpesaCodes.js';
+
 export const initiatePayment = async (req, res) => {
   try {
     const { amount, phone, accountType, duration, profileData } = req.body;
     const userId = req.user._id;
 
     if (amount <= 0) {
-      return res.status(400).json({ error: 'Amount must be greater than 0' });
+      return res.status(400).json({ code: 'INVALID_AMOUNT', error: 'Amount must be greater than 0' });
     }
 
-    const normalizedPhone = phone.startsWith('254') ? phone : `254${phone.slice(1)}`;
+    // ✅ TWEAK: Robust phone normalization (like prorate: strip non-digits, handle local/international)
+    let normalizedPhone;
+    if (phone) {
+      const phoneStr = phone.toString().replace(/\D/g, '');
+      if (phoneStr.startsWith('254')) {
+        normalizedPhone = phoneStr;
+      } else if (phoneStr.startsWith('07') && phoneStr.length === 10) {
+        normalizedPhone = '254' + phoneStr.substring(1);
+      } else {
+        return res.status(400).json({ code: 'INVALID_PHONE', error: 'Invalid phone. Use 07xxxxxxxx or 2547xxxxxxxx.' });
+      }
+    } else {
+      return res.status(400).json({ code: 'MISSING_PHONE', error: 'No phone provided.' });
+    }
+
+    // ✅ TWEAK: Validate M-Pesa format
+    if (!normalizedPhone.startsWith('2547')) {
+      return res.status(400).json({ code: 'INVALID_PHONE', error: 'Phone must be a valid Kenyan M-Pesa number starting with 2547.' });
+    }
+
+    console.log(`📞 Normalized phone for payment: ${normalizedPhone}`); // ✅ DEBUG
+
     const accountRef = `Account-${accountType}-${Date.now()}`;
     const transactionDesc = `Payment for ${accountType} (${duration} days)`;
 
@@ -40,6 +62,16 @@ export const initiatePayment = async (req, res) => {
       transactionDesc
     );
 
+    // ✅ TWEAK: Check STK response for errors
+    if (stkResponse.error || !stkResponse.CheckoutRequestID) {
+      console.error('❌ STK failed:', stkResponse.error || 'No CheckoutRequestID'); // ✅ DEBUG
+      // Optionally mark tx as FAILED
+      transaction.status = 'FAILED';
+      transaction.resultDesc = stkResponse.error || 'STK initiation failed';
+      await transaction.save();
+      return res.status(500).json({ code: 'STK_PUSH_FAILED', error: stkResponse.error || 'Failed to send STK Push. Please try again.' });
+    }
+
     transaction.checkoutRequestID = stkResponse.CheckoutRequestID;
     await transaction.save();
 
@@ -53,7 +85,7 @@ export const initiatePayment = async (req, res) => {
     });
   } catch (error) {
     console.error('Payment initiation error:', error);
-    res.status(500).json({ error: 'Payment initiation failed. Please try again later.' });
+    res.status(500).json({ code: 'INTERNAL_ERROR', error: 'Payment initiation failed. Please try again later.' });
   }
 };
 
@@ -152,6 +184,14 @@ export const handleCallback = async (req, res) => {
               transaction.transactionDesc
             );
 
+            if (retryResponse.error || !retryResponse.CheckoutRequestID) {
+              console.error('Retry STK failed:', retryResponse.error || 'No CheckoutRequestID');
+              transaction.status = 'FAILED';
+              transaction.resultDesc = retryResponse.error || 'Retry failed';
+              await transaction.save();
+              return;
+            }
+
             transaction.checkoutRequestID = retryResponse.CheckoutRequestID;
             transaction.status = 'PENDING';
             await transaction.save();
@@ -159,10 +199,14 @@ export const handleCallback = async (req, res) => {
             console.log(`💳 Retried STK initiated: ${retryResponse.CheckoutRequestID} for tx ${transaction._id}`);
           } catch (retryError) {
             console.error('Retry STK Push failed:', retryError.message);
+            transaction.status = 'FAILED';
+            transaction.resultDesc = retryError.message;
+            await transaction.save();
           }
         }, RETRY_DELAY_MS);
       } else {
         transaction.status = 'FAILED';
+        transaction.resultDesc = ResultDesc;
         await transaction.save();
         console.log(`❌ Max retries reached for tx ${transaction._id}. Marked FAILED.`);
       }
@@ -215,21 +259,21 @@ export const getMyTransactions = async (req, res) => {
   }
 };
 
-// getTransactionStatus
+// ✅ UPDATED: getTransactionStatus - Now uses transactionId instead of checkoutRequestID for polling
 export const getTransactionStatus = async (req, res) => {
   try {
-    const { checkoutRequestID } = req.query;
-    if (!checkoutRequestID) {
-      return res.status(400).json({ error: 'Missing checkoutRequestID' });
+    const { transactionId } = req.query;
+    if (!transactionId) {
+      return res.status(400).json({ error: 'Missing transactionId' });
     }
 
-    const tx = await Transaction.findOne({ checkoutRequestID }).lean();
+    const tx = await Transaction.findById(transactionId).lean();
     if (!tx) {
-      console.log('🔍 No tx found for polling:', checkoutRequestID);
+      console.log('🔍 No tx found for polling:', transactionId);
       return res.status(404).json({ transaction: null });
     }
 
-    console.log('🔍 Single tx query for polling:', { checkoutRequestID, status: tx.status, resultCode: tx.resultCode, resultDesc: tx.resultDesc?.substring(0, 50) + '...' });
+    console.log('🔍 Single tx query for polling:', { transactionId, status: tx.status, resultCode: tx.resultCode, resultDesc: tx.resultDesc?.substring(0, 50) + '...' });
 
     res.json({ transaction: tx });
   } catch (error) {
@@ -238,41 +282,73 @@ export const getTransactionStatus = async (req, res) => {
   }
 };
 
-// initiateProratePayment
+// ✅ UPDATED: initiateProratePayment - Now POST with req.body, enhanced phone handling (use provided or profile), validation, error codes, and success: true
 export const initiateProratePayment = async (req, res) => {
   try {
-    const { userId, amount, newType } = req.query;
+    const { userId, phone, amount, newType } = req.body; // ✅ TWEAK: Use req.body for POST
     if (!userId || !amount || !newType) {
-      return res.status(400).json({ error: 'Missing userId, amount, or newType' });
+      return res.status(400).json({ code: 'MISSING_FIELDS', error: 'Missing userId, amount, or newType' });
     }
 
     const parsedAmount = parseInt(amount);
     if (parsedAmount <= 0) {
-      return res.status(400).json({ error: 'Invalid amount' });
+      return res.status(400).json({ code: 'INVALID_AMOUNT', error: 'Invalid amount' });
     }
 
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ code: 'USER_NOT_FOUND', error: 'User not found' });
     }
 
     const profile = await Profile.findOne({ user: userId }).lean();
     if (!profile || profile.accountType.type === newType || profile.active === false) {
-      return res.status(400).json({ error: 'Invalid upgrade: No active profile or already upgraded' });
+      return res.status(400).json({ code: 'INVALID_UPGRADE', error: 'Invalid upgrade: No active profile or already upgraded' });
     }
 
-    const phone = profile.personal.phone.startsWith('254') ? profile.personal.phone : `254${profile.personal.phone.slice(1)}`;
+    // ✅ TWEAK: Robust phone normalization (use provided or profile, to 2547xxxxxxxx)
+    let normalizedPhone;
+    if (phone) {
+      const phoneStr = phone.toString().replace(/\D/g, '');
+      if (phoneStr.startsWith('254')) {
+        normalizedPhone = phoneStr;
+      } else if (phoneStr.startsWith('07') && phoneStr.length === 10) {
+        normalizedPhone = '254' + phoneStr.substring(1);
+      } else {
+        return res.status(400).json({ code: 'INVALID_PHONE', error: 'Invalid provided phone. Use 07xxxxxxxx or 2547xxxxxxxx.' });
+      }
+    } else {
+      // Fallback to profile phone
+      const profilePhoneStr = profile.personal.phone.toString().replace(/\D/g, '');
+      if (profilePhoneStr.startsWith('07') && profilePhoneStr.length === 10) {
+        normalizedPhone = '254' + profilePhoneStr.substring(1);
+      } else {
+        return res.status(400).json({ code: 'MISSING_PHONE', error: 'No valid phone in profile. Please provide one.' });
+      }
+    }
+
+    // ✅ TWEAK: Validate M-Pesa format
+    if (!normalizedPhone.startsWith('2547')) {
+      return res.status(400).json({ code: 'INVALID_PHONE', error: 'Phone must be a valid Kenyan M-Pesa number starting with 2547.' });
+    }
+
+    console.log(`📞 Normalized phone for prorate: ${normalizedPhone}`); // ✅ DEBUG
 
     const ref = `Prorate-${newType}-${String(userId).slice(-6)}`;
     const desc = `Proration for ${newType} upgrade (${parsedAmount} Ksh)`;
 
-    const stkResponse = await initiateSTKPush(phone, parsedAmount, ref, desc);
+    // ✅ TWEAK: Check STK response for errors
+    const stkResponse = await initiateSTKPush(normalizedPhone, parsedAmount, ref, desc);
+
+    if (stkResponse.error || !stkResponse.CheckoutRequestID) {
+      console.error('❌ Prorate STK failed:', stkResponse.error || 'No CheckoutRequestID'); // ✅ DEBUG
+      return res.status(500).json({ code: 'STK_PUSH_FAILED', error: stkResponse.error || 'Failed to send STK Push. Please try again.' });
+    }
 
     const transaction = await Transaction.create({
       user: userId,
       checkoutRequestID: stkResponse.CheckoutRequestID,
       amount: parsedAmount,
-      phone,
+      phone: normalizedPhone,
       accountReference: ref,
       transactionDesc: desc,
       accountType: newType,
@@ -282,14 +358,14 @@ export const initiateProratePayment = async (req, res) => {
 
     console.log(`💳 Prorate STK initiated: ${stkResponse.CheckoutRequestID} for ${newType} (user ${userId}, amount ${parsedAmount})`);
     res.json({
-      requiresPayment: true,
+      success: true,
       message: 'Proration payment initiated. Check your phone for M-Pesa PIN prompt.',
       checkoutRequestID: stkResponse.CheckoutRequestID,
       transactionId: transaction._id,
       amount: parsedAmount,
     });
   } catch (error) {
-    console.error('Prorate initiation error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Prorate initiation error:', error); // ✅ DEBUG
+    res.status(500).json({ code: 'INTERNAL_ERROR', error: error.message });
   }
 };

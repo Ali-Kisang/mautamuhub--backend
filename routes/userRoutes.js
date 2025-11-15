@@ -20,7 +20,7 @@ router.post('/payments/validation', handleValidation);
 router.get('/payments/my-transactions', protect, getMyTransactions);
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
-router.get('/payments/prorate-upgrade', protect, initiateProratePayment);  
+router.post('/payments/prorate-upgrade', protect, initiateProratePayment);  
 // Other routes (after specific ones)
 router.get("/all", protect, getUsers);
 router.get("/profile/:id", getUserProfile);
